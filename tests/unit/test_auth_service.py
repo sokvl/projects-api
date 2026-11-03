@@ -49,12 +49,28 @@ async def test_register_existing_login_raises_conflict(
     session.commit.assert_not_awaited()
 
 
+class FakeDriverError(Exception):
+    def __init__(self, sqlstate: str) -> None:
+        self.sqlstate = sqlstate
+
+
 async def test_register_concurrent_insert_raises_conflict(
     service: AuthService, users: AsyncMock, session: AsyncMock
 ) -> None:
-    users.add.side_effect = IntegrityError("INSERT INTO users", {}, Exception("unique violation"))
+    users.add.side_effect = IntegrityError("INSERT INTO users", {}, FakeDriverError("23505"))
 
     with pytest.raises(ConflictError):
+        await service.register("marek", "secret123")
+
+    session.commit.assert_not_awaited()
+
+
+async def test_register_other_integrity_error_is_not_conflict(
+    service: AuthService, users: AsyncMock, session: AsyncMock
+) -> None:
+    users.add.side_effect = IntegrityError("INSERT INTO users", {}, FakeDriverError("23502"))
+
+    with pytest.raises(IntegrityError):
         await service.register("marek", "secret123")
 
     session.commit.assert_not_awaited()

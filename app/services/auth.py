@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
 from app.core.security import hash_password
+from app.db.errors import is_unique_violation
 from app.models.user import User
 from app.repositories.user import UserRepository
 
@@ -22,6 +23,8 @@ class AuthService:
         try:
             await self.users.add(user_object)
         except IntegrityError as err:
+            if not is_unique_violation(err):
+                raise
             raise ConflictError("User already exists!") from err
 
         await self.session.commit()
