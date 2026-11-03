@@ -17,5 +17,4 @@ COPY alembic ./alembic
 COPY app ./app
 USER appuser
 EXPOSE 8000
-# Apply migrations, then replace the shell with uvicorn so it receives stop signals
 CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
