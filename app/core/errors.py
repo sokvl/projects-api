@@ -12,3 +12,7 @@ class ForbiddenError(DomainError):
 
 class ConflictError(DomainError):
     pass
+
+
+class UnauthorizedError(DomainError):
+    pass

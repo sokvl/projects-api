@@ -1,9 +1,13 @@
+import uuid
 from unittest.mock import AsyncMock
 
+import jwt
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.core.errors import ConflictError
+from app.core.config import settings
+from app.core.errors import ConflictError, UnauthorizedError
+from app.core.security import DUMMY_PASSWORD_HASH, JWT_ALGORITHM, password_hasher
 from app.models.user import User
 from app.services.auth import AuthService
 
@@ -74,3 +78,46 @@ async def test_register_other_integrity_error_is_not_conflict(
         await service.register("marek", "secret123")
 
     session.commit.assert_not_awaited()
+
+
+@pytest.fixture
+def existing_user() -> User:
+    return User(id=uuid.uuid4(), login="marek", password_hash=password_hasher.hash("secret123"))
+
+
+async def test_login_returns_token_with_user_id(
+    service: AuthService, users: AsyncMock, existing_user: User
+) -> None:
+    users.get_by_login.return_value = existing_user
+
+    token = await service.login("marek", "secret123")
+
+    claims = jwt.decode(token, settings.jwt_secret, algorithms=[JWT_ALGORITHM])
+    assert claims["sub"] == str(existing_user.id)
+    assert claims["exp"] - claims["iat"] == settings.jwt_expire_minutes * 60
+
+
+async def test_login_wrong_password_and_unknown_login_give_same_error(
+    service: AuthService, users: AsyncMock, existing_user: User
+) -> None:
+    users.get_by_login.return_value = existing_user
+    with pytest.raises(UnauthorizedError) as wrong_password:
+        await service.login("marek", "wrong-pass")
+
+    users.get_by_login.return_value = None
+    with pytest.raises(UnauthorizedError) as unknown_login:
+        await service.login("nobody", "secret123")
+
+    assert str(wrong_password.value) == str(unknown_login.value)
+
+
+async def test_login_unknown_user_still_verifies_password(
+    service: AuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    verify = AsyncMock(return_value=False)
+    monkeypatch.setattr("app.services.auth.verify_password", verify)
+
+    with pytest.raises(UnauthorizedError):
+        await service.login("nobody", "secret123")
+
+    verify.assert_awaited_once_with("secret123", DUMMY_PASSWORD_HASH)

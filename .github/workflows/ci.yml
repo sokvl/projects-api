@@ -34,6 +34,9 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+      JWT_SECRET: ci-test-secret-not-used-anywhere-else-0123456789
     steps:
       - uses: actions/checkout@v4
 

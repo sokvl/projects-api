@@ -1,14 +1,14 @@
 from datetime import datetime
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.schemas.common import Login
+from app.schemas.common import Login, Password
 
 
 class RegisterIn(BaseModel):
     login: Login
-    password: str = Field(min_length=8, max_length=128)
+    password: Password
     repeat_password: str
 
     @model_validator(mode="after")
@@ -16,6 +16,16 @@ class RegisterIn(BaseModel):
         if self.password != self.repeat_password:
             raise ValueError("Passwords do not match")
         return self
+
+
+class LoginIn(BaseModel):
+    login: Login
+    password: str = Field(max_length=128)
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
 
 
 class UserOut(BaseModel):
