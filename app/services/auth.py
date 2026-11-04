@@ -1,8 +1,14 @@
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ConflictError
-from app.core.security import hash_password
+from app.core.errors import ConflictError, UnauthorizedError
+from app.core.security import (
+    DUMMY_PASSWORD_HASH,
+    create_access_token,
+    hash_password,
+    verify_password,
+)
+from app.db.errors import is_unique_violation
 from app.models.user import User
 from app.repositories.user import UserRepository
 
@@ -22,7 +28,20 @@ class AuthService:
         try:
             await self.users.add(user_object)
         except IntegrityError as err:
+            if not is_unique_violation(err):
+                raise
             raise ConflictError("User already exists!") from err
 
         await self.session.commit()
         return user_object
+
+    async def login(self, login: str, password: str) -> str:
+        user = await self.users.get_by_login(login)
+        if user is None:
+            await verify_password(password, DUMMY_PASSWORD_HASH)
+            raise UnauthorizedError("Invalid login or password")
+
+        if not await verify_password(password, user.password_hash):
+            raise UnauthorizedError("Invalid login or password")
+
+        return create_access_token(user.id)
