@@ -15,7 +15,6 @@ from app.repositories.user import UserRepository
 DUMMY_PASSWORD_HASH = password_hasher.hash("timing-attack-dummy")
 
 
-# For now service handles sqlalchemy UoW, might refactor later
 class AuthService:
     def __init__(self, users_repository: UserRepository, session: AsyncSession) -> None:
         self.users = users_repository
@@ -39,11 +38,10 @@ class AuthService:
 
     async def login(self, login: str, password: str) -> str:
         user = await self.users.get_by_login(login)
-        if user is None:
-            await verify_password(password, DUMMY_PASSWORD_HASH)
-            raise UnauthorizedError("Invalid login or password")
+        hash_to_check = user.password_hash if user else DUMMY_PASSWORD_HASH
+        password_ok = await verify_password(password, hash_to_check)
 
-        if not await verify_password(password, user.password_hash):
+        if user is None or not password_ok:
             raise UnauthorizedError("Invalid login or password")
 
         return create_access_token(user.id)
