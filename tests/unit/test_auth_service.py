@@ -7,9 +7,9 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core.errors import ConflictError, UnauthorizedError
-from app.core.security import DUMMY_PASSWORD_HASH, JWT_ALGORITHM, password_hasher
+from app.core.security import JWT_ALGORITHM, password_hasher
 from app.models.user import User
-from app.services.auth import AuthService
+from app.services.auth import DUMMY_PASSWORD_HASH, AuthService
 
 
 @pytest.fixture

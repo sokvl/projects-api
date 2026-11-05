@@ -3,14 +3,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, UnauthorizedError
 from app.core.security import (
-    DUMMY_PASSWORD_HASH,
     create_access_token,
     hash_password,
+    password_hasher,
     verify_password,
 )
 from app.db.errors import is_unique_violation
 from app.models.user import User
 from app.repositories.user import UserRepository
+
+DUMMY_PASSWORD_HASH = password_hasher.hash("timing-attack-dummy")
 
 
 # For now service handles sqlalchemy UoW, might refactor later
