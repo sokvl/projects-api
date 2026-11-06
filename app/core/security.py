@@ -6,6 +6,7 @@ from anyio import CapacityLimiter, to_thread
 from pwdlib import PasswordHash
 
 from app.core.config import settings
+from app.core.errors import UnauthorizedError
 
 JWT_ALGORITHM = "HS256"
 
@@ -13,8 +14,6 @@ password_hasher = PasswordHash.recommended()
 
 # Might be tuned later or replaced by rate limiting.
 hash_limiter = CapacityLimiter(20)
-
-DUMMY_PASSWORD_HASH = password_hasher.hash("timing-attack-dummy")
 
 
 async def hash_password(password: str) -> str:
@@ -35,3 +34,16 @@ def create_access_token(user_id: uuid.UUID) -> str:
         "exp": now + timedelta(minutes=settings.jwt_expire_minutes),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=JWT_ALGORITHM)
+
+
+def decode_access_token(token: str) -> uuid.UUID:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[JWT_ALGORITHM],
+            options={"require": ["exp", "iat", "sub"]},
+        )
+        return uuid.UUID(payload["sub"])
+    except (jwt.InvalidTokenError, ValueError) as err:
+        raise UnauthorizedError("Invalid or expired token") from err

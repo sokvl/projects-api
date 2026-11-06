@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 
-from app.api import auth
+from app.api import auth, projects
 from app.core.handlers import register_exception_handlers
 from app.db.session import DBSessionDep, engine
 
@@ -18,6 +18,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 app = FastAPI(title="Projects API", lifespan=lifespan)
 register_exception_handlers(app)
 app.include_router(auth.router)
+app.include_router(projects.router)
 
 
 @app.get("/health")

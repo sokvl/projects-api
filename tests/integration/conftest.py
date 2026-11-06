@@ -43,3 +43,11 @@ async def client() -> AsyncIterator[AsyncClient]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def auth_headers(client: AsyncClient) -> dict[str, str]:
+    credentials = {"login": "owner", "password": "secret123"}
+    await client.post("/auth", json={**credentials, "repeat_password": "secret123"})
+    response = await client.post("/login", json=credentials)
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
