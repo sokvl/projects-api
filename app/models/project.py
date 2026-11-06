@@ -2,9 +2,10 @@ import uuid
 from enum import StrEnum
 
 from sqlalchemy import CheckConstraint, ForeignKey, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, BaseModel
+from app.models.document import Document
 
 
 class ProjectRole(StrEnum):
@@ -20,6 +21,9 @@ class Project(BaseModel):
 
     name: Mapped[str] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
+    documents: Mapped[list["Document"]] = relationship(
+        "Document", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class ProjectMember(Base):

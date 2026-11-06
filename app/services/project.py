@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import Project, ProjectMember, ProjectRole
@@ -19,3 +21,6 @@ class ProjectService:
 
         await self.session.commit()
         return project
+
+    async def list_users_projects(self, user: User) -> Sequence[Project]:
+        return await self.projects.list_users_projects(user.id)
