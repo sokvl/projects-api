@@ -1,11 +1,14 @@
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
+from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event, make_url, text
+from sqlalchemy import Connection, event, make_url, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from alembic import command
 from app.core.config import settings
 from app.db.session import get_session
 from app.main import app
@@ -15,12 +18,24 @@ dev_url = make_url(settings.database_url)
 test_engine = create_async_engine(dev_url.set(database=f"{dev_url.database}_test"))
 test_session_maker = async_sessionmaker(bind=test_engine, expire_on_commit=False)
 
+MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "alembic"
+
+
+def run_migrations(connection: Connection) -> None:
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATIONS_DIR))
+    config.attributes["connection"] = connection
+    connection.execute(text("DROP SCHEMA public CASCADE"))
+    connection.execute(text("CREATE SCHEMA public"))
+    command.upgrade(config, "head")
+    command.downgrade(config, "base")
+    command.upgrade(config, "head")
+
 
 @pytest.fixture(scope="session", autouse=True)
 async def create_tables() -> AsyncIterator[None]:
     async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(run_migrations)
     yield
     await test_engine.dispose()
 
