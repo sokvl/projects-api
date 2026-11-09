@@ -2,20 +2,22 @@ import uuid
 from collections.abc import Sequence
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.api.deps import CurrentUserDep
 from app.db.session import DBSessionDep
-from app.models.project import Project
+from app.models.project import Project, ProjectRole
 from app.repositories.project import ProjectRepository
-from app.schemas.project import ProjectIn, ProjectOut, ProjectWithDocumentsOut
+from app.repositories.user import UserRepository
+from app.schemas.common import Login
+from app.schemas.project import MemberOut, ProjectIn, ProjectOut, ProjectWithDocumentsOut
 from app.services.project import ProjectService
 
 router = APIRouter(tags=["projects"])
 
 
 async def get_project_service(session: DBSessionDep) -> ProjectService:
-    return ProjectService(ProjectRepository(session), session)
+    return ProjectService(ProjectRepository(session), UserRepository(session), session)
 
 
 ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
@@ -52,3 +54,16 @@ async def delete_project(
     project_id: uuid.UUID, user: CurrentUserDep, service: ProjectServiceDep
 ) -> None:
     await service.delete(project_id, user)
+
+
+@router.post(
+    "/project/{project_id}/invite", status_code=status.HTTP_201_CREATED, response_model=MemberOut
+)
+async def invite_to_project(
+    project_id: uuid.UUID,
+    user: Annotated[Login, Query()],
+    owner: CurrentUserDep,
+    service: ProjectServiceDep,
+) -> MemberOut:
+    member = await service.invite(project_id, owner, user)
+    return MemberOut(login=user, role=ProjectRole(member.role))

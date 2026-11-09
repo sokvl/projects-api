@@ -10,6 +10,7 @@ from app.core.errors import ConflictError, UnauthorizedError
 from app.core.security import JWT_ALGORITHM, password_hasher
 from app.models.user import User
 from app.services.auth import DUMMY_PASSWORD_HASH, AuthService
+from tests.unit.fakes import FakeDriverError
 
 
 @pytest.fixture
@@ -51,11 +52,6 @@ async def test_register_existing_login_raises_conflict(
 
     users.add.assert_not_awaited()
     session.commit.assert_not_awaited()
-
-
-class FakeDriverError(Exception):
-    def __init__(self, sqlstate: str) -> None:
-        self.sqlstate = sqlstate
 
 
 async def test_register_concurrent_insert_raises_conflict(
