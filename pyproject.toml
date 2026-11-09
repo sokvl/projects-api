@@ -37,7 +37,7 @@ asyncio_default_test_loop_scope = "session"
 addopts = "--cov=app --cov-report=term-missing"
 
 [tool.coverage.report]
-fail_under = 0  # raise to 80 once real features land (NFR-06)
+fail_under = 80
 
 [dependency-groups]
 dev = [

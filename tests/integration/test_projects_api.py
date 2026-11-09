@@ -4,13 +4,20 @@ from typing import Any
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Document, ProjectMember, User
 from app.models.project import ProjectRole
 
 AuthHeadersFactory = Callable[[str], Awaitable[dict[str, str]]]
+
+PROJECT_ENDPOINTS = [
+    ("GET", "/project/{}/info"),
+    ("PUT", "/project/{}/info"),
+    ("DELETE", "/project/{}"),
+]
+PROJECT_ENDPOINT_IDS = ["get_info", "put_info", "delete"]
 
 
 async def create_project(client: AsyncClient, name: str, headers: dict[str, str]) -> str:
@@ -279,24 +286,75 @@ async def test_update_project_invalid_body_returns_422_and_changes_nothing(
     assert stored.json()["name"] == "old"
 
 
-@pytest.mark.parametrize("method", ["GET", "PUT"])
-async def test_project_info_with_invalid_uuid_returns_422(
-    client: AsyncClient, auth_headers: dict[str, str], method: str
+@pytest.mark.parametrize(("method", "path"), PROJECT_ENDPOINTS, ids=PROJECT_ENDPOINT_IDS)
+async def test_project_endpoint_with_invalid_uuid_returns_422(
+    client: AsyncClient, auth_headers: dict[str, str], method: str, path: str
 ) -> None:
     response = await client.request(
-        method, "/project/not-a-uuid/info", json={"name": "x"}, headers=auth_headers
+        method, path.format("not-a-uuid"), json={"name": "x"}, headers=auth_headers
     )
 
     assert response.status_code == 422
 
 
-@pytest.mark.parametrize("method", ["GET", "PUT"])
-async def test_project_info_without_token_returns_401(
-    client: AsyncClient, auth_headers: dict[str, str], method: str
+@pytest.mark.parametrize(("method", "path"), PROJECT_ENDPOINTS, ids=PROJECT_ENDPOINT_IDS)
+async def test_project_endpoint_without_token_returns_401(
+    client: AsyncClient, auth_headers: dict[str, str], method: str, path: str
 ) -> None:
     project_id = await create_project(client, "p1", auth_headers)
 
-    response = await client.request(method, f"/project/{project_id}/info", json={"name": "x"})
+    response = await client.request(method, path.format(project_id), json={"name": "x"})
 
     assert response.status_code == 401
     assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+async def test_delete_project_as_owner_removes_project_members_and_documents(
+    client: AsyncClient,
+    make_auth_headers: AuthHeadersFactory,
+    db_session: AsyncSession,
+) -> None:
+    owner_headers = await make_auth_headers("john")
+    await make_auth_headers("doe")
+    project_id = await create_project(client, "p1", owner_headers)
+    await add_participant(db_session, project_id, "doe")
+    await add_document(db_session, project_id, "notes.txt")
+
+    response = await client.delete(f"/project/{project_id}", headers=owner_headers)
+
+    assert response.status_code == 204
+    assert response.content == b""
+    after = await client.get(f"/project/{project_id}/info", headers=owner_headers)
+    assert after.status_code == 404
+    members = await db_session.scalar(select(func.count()).select_from(ProjectMember))
+    documents = await db_session.scalar(select(func.count()).select_from(Document))
+    assert (members, documents) == (0, 0)
+
+
+async def test_delete_project_as_participant_returns_403_and_keeps_project(
+    client: AsyncClient, make_auth_headers: AuthHeadersFactory, db_session: AsyncSession
+) -> None:
+    owner_headers = await make_auth_headers("john")
+    participant_headers = await make_auth_headers("doe")
+    project_id = await create_project(client, "p1", owner_headers)
+    await add_participant(db_session, project_id, "doe")
+
+    response = await client.delete(f"/project/{project_id}", headers=participant_headers)
+
+    assert response.status_code == 403
+    after = await client.get(f"/project/{project_id}/info", headers=owner_headers)
+    assert after.status_code == 200
+
+
+async def test_delete_project_of_other_user_looks_like_missing_project(
+    client: AsyncClient, make_auth_headers: AuthHeadersFactory
+) -> None:
+    owner_headers = await make_auth_headers("john")
+    outsider_headers = await make_auth_headers("doe")
+    project_id = await create_project(client, "p1", owner_headers)
+
+    foreign = await client.delete(f"/project/{project_id}", headers=outsider_headers)
+    missing = await client.delete(f"/project/{uuid.uuid4()}", headers=outsider_headers)
+
+    assert foreign.status_code == missing.status_code == 404
+    assert foreign.json() == missing.json()

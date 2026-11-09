@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.errors import NotFoundError
-from app.models.project import Project, ProjectRole
+from app.core.errors import ForbiddenError, NotFoundError
+from app.models.project import Project, ProjectMember, ProjectRole
 from app.models.user import User
 from app.services.project import ProjectService
 
@@ -93,4 +93,44 @@ async def test_update_replaces_all_fields_and_commits(
 
     assert result is project
     assert (project.name, project.description) == ("Nowa", None)
+    session.commit.assert_awaited_once()
+
+
+def membership(role: ProjectRole) -> ProjectMember:
+    return ProjectMember(project_id=PROJECT_ID, user_id=uuid.uuid4(), role=role)
+
+
+async def test_delete_without_membership_raises_not_found(
+    projects: AsyncMock, session: AsyncMock, owner: User
+) -> None:
+    projects.get_member.return_value = None
+
+    with pytest.raises(NotFoundError):
+        await ProjectService(projects, session).delete(PROJECT_ID, owner)
+
+    projects.delete.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
+async def test_delete_as_participant_raises_forbidden(
+    projects: AsyncMock, session: AsyncMock, owner: User
+) -> None:
+    projects.get_member.return_value = membership(ProjectRole.PARTICIPANT)
+
+    with pytest.raises(ForbiddenError):
+        await ProjectService(projects, session).delete(PROJECT_ID, owner)
+
+    projects.delete.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
+async def test_delete_as_owner_deletes_and_commits(
+    projects: AsyncMock, session: AsyncMock, owner: User
+) -> None:
+    projects.get_member.return_value = membership(ProjectRole.OWNER)
+
+    await ProjectService(projects, session).delete(PROJECT_ID, owner)
+
+    projects.get_member.assert_awaited_once_with(PROJECT_ID, owner.id)
+    projects.delete.assert_awaited_once_with(PROJECT_ID)
     session.commit.assert_awaited_once()

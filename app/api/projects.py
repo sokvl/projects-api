@@ -45,3 +45,10 @@ async def update_project(
     project_id: uuid.UUID, body: ProjectIn, user: CurrentUserDep, service: ProjectServiceDep
 ) -> Project:
     return await service.update(project_id, user, body.name, body.description)
+
+
+@router.delete("/project/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(
+    project_id: uuid.UUID, user: CurrentUserDep, service: ProjectServiceDep
+) -> None:
+    await service.delete(project_id, user)

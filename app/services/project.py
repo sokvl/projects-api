@@ -3,7 +3,7 @@ from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError
+from app.core.errors import ForbiddenError, NotFoundError
 from app.models.project import Project, ProjectMember, ProjectRole
 from app.models.user import User
 from app.repositories.project import ProjectRepository
@@ -38,6 +38,15 @@ class ProjectService:
         project.description = description
         await self.session.commit()
         return project
+
+    async def delete(self, project_id: uuid.UUID, user: User) -> None:
+        member = await self.projects.get_member(project_id, user.id)
+        if member is None:
+            raise NotFoundError("Project not found")
+        if member.role != ProjectRole.OWNER:
+            raise ForbiddenError("Only the owner can delete the project")
+        await self.projects.delete(project_id)
+        await self.session.commit()
 
     async def _get_accessible(self, project_id: uuid.UUID, user: User) -> Project:
         project = await self.projects.get_for_member(project_id, user.id)
