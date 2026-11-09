@@ -1,7 +1,9 @@
+import uuid
 from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import NotFoundError
 from app.models.project import Project, ProjectMember, ProjectRole
 from app.models.user import User
 from app.repositories.project import ProjectRepository
@@ -24,3 +26,21 @@ class ProjectService:
 
     async def list_users_projects(self, user: User) -> Sequence[Project]:
         return await self.projects.list_users_projects(user.id)
+
+    async def get(self, project_id: uuid.UUID, user: User) -> Project:
+        return await self._get_accessible(project_id, user)
+
+    async def update(
+        self, project_id: uuid.UUID, user: User, name: str, description: str | None
+    ) -> Project:
+        project = await self._get_accessible(project_id, user)
+        project.name = name
+        project.description = description
+        await self.session.commit()
+        return project
+
+    async def _get_accessible(self, project_id: uuid.UUID, user: User) -> Project:
+        project = await self.projects.get_for_member(project_id, user.id)
+        if project is None:
+            raise NotFoundError("Project not found")
+        return project

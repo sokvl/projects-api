@@ -13,6 +13,7 @@ class BaseModel(Base):
     """Shared columns for entity tables (users, projects, documents)."""
 
     __abstract__ = True
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

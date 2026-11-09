@@ -33,6 +33,16 @@ async def add_document(session: AsyncSession, project_id: str, filename: str) ->
     await session.commit()
 
 
+async def add_participant(session: AsyncSession, project_id: str, login: str) -> None:
+    user_id = await session.scalar(select(User.id).where(User.login == login))
+    session.add(
+        ProjectMember(
+            user_id=user_id, project_id=uuid.UUID(project_id), role=ProjectRole.PARTICIPANT
+        )
+    )
+    await session.commit()
+
+
 async def test_create_project_returns_201(
     client: AsyncClient, auth_headers: dict[str, str]
 ) -> None:
@@ -135,15 +145,7 @@ async def test_list_users_projects_includes_projects_as_participant(
     owner_headers = await make_auth_headers("john")
     participant_headers = await make_auth_headers("doe")
     project_id = await create_project(client, "shared", owner_headers)
-    participant_id = await db_session.scalar(select(User.id).where(User.login == "doe"))
-    db_session.add(
-        ProjectMember(
-            user_id=participant_id,
-            project_id=uuid.UUID(project_id),
-            role=ProjectRole.PARTICIPANT,
-        )
-    )
-    await db_session.commit()
+    await add_participant(db_session, project_id, "doe")
 
     response = await client.get("/projects", headers=participant_headers)
 
@@ -191,3 +193,110 @@ async def test_list_users_projects_query_count_does_not_grow_with_projects(
     queries_for_five = await count_list_queries()
 
     assert queries_for_five == queries_for_one
+
+
+async def test_get_project_as_owner_returns_200(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    project_id = await create_project(client, "p1", auth_headers)
+
+    response = await client.get(f"/project/{project_id}/info", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body.keys() == {"id", "name", "description", "created_at", "updated_at"}
+    assert body["id"] == project_id
+
+
+async def test_participant_can_get_and_update_project(
+    client: AsyncClient, make_auth_headers: AuthHeadersFactory, db_session: AsyncSession
+) -> None:
+    owner_headers = await make_auth_headers("john")
+    participant_headers = await make_auth_headers("doe")
+    project_id = await create_project(client, "shared", owner_headers)
+    await add_participant(db_session, project_id, "doe")
+
+    get_response = await client.get(f"/project/{project_id}/info", headers=participant_headers)
+    put_response = await client.put(
+        f"/project/{project_id}/info", json={"name": "renamed"}, headers=participant_headers
+    )
+
+    assert get_response.status_code == 200
+    assert put_response.status_code == 200
+    assert put_response.json()["name"] == "renamed"
+
+
+@pytest.mark.parametrize("method", ["GET", "PUT"])
+async def test_project_of_other_user_looks_like_missing_project(
+    client: AsyncClient, make_auth_headers: AuthHeadersFactory, method: str
+) -> None:
+    owner_headers = await make_auth_headers("john")
+    outsider_headers = await make_auth_headers("doe")
+    project_id = await create_project(client, "secret", owner_headers)
+
+    foreign = await client.request(
+        method, f"/project/{project_id}/info", json={"name": "x"}, headers=outsider_headers
+    )
+    missing = await client.request(
+        method, f"/project/{uuid.uuid4()}/info", json={"name": "x"}, headers=outsider_headers
+    )
+
+    assert foreign.status_code == missing.status_code == 404
+    assert foreign.json() == missing.json()
+
+
+async def test_update_project_replaces_fields(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    created = await client.post(
+        "/projects", json={"name": "old", "description": "opis"}, headers=auth_headers
+    )
+    project_id = created.json()["id"]
+
+    response = await client.put(
+        f"/project/{project_id}/info", json={"name": "  new  "}, headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["name"], body["description"]) == ("new", None)
+    assert body["updated_at"] > created.json()["updated_at"]
+    stored = await client.get(f"/project/{project_id}/info", headers=auth_headers)
+    assert stored.json() == body
+
+
+async def test_update_project_invalid_body_returns_422_and_changes_nothing(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    project_id = await create_project(client, "old", auth_headers)
+
+    response = await client.put(
+        f"/project/{project_id}/info", json={"name": ""}, headers=auth_headers
+    )
+
+    assert response.status_code == 422
+    stored = await client.get(f"/project/{project_id}/info", headers=auth_headers)
+    assert stored.json()["name"] == "old"
+
+
+@pytest.mark.parametrize("method", ["GET", "PUT"])
+async def test_project_info_with_invalid_uuid_returns_422(
+    client: AsyncClient, auth_headers: dict[str, str], method: str
+) -> None:
+    response = await client.request(
+        method, "/project/not-a-uuid/info", json={"name": "x"}, headers=auth_headers
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("method", ["GET", "PUT"])
+async def test_project_info_without_token_returns_401(
+    client: AsyncClient, auth_headers: dict[str, str], method: str
+) -> None:
+    project_id = await create_project(client, "p1", auth_headers)
+
+    response = await client.request(method, f"/project/{project_id}/info", json={"name": "x"})
+
+    assert response.status_code == 401
+    assert response.headers["WWW-Authenticate"] == "Bearer"

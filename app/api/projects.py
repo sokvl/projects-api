@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Sequence
 from typing import Annotated
 
@@ -30,3 +31,17 @@ async def create_project(
 @router.get("/projects", response_model=list[ProjectWithDocumentsOut])
 async def list_projects(user: CurrentUserDep, service: ProjectServiceDep) -> Sequence[Project]:
     return await service.list_users_projects(user)
+
+
+@router.get("/project/{project_id}/info", response_model=ProjectOut)
+async def get_project(
+    project_id: uuid.UUID, user: CurrentUserDep, service: ProjectServiceDep
+) -> Project:
+    return await service.get(project_id, user)
+
+
+@router.put("/project/{project_id}/info", response_model=ProjectOut)
+async def update_project(
+    project_id: uuid.UUID, body: ProjectIn, user: CurrentUserDep, service: ProjectServiceDep
+) -> Project:
+    return await service.update(project_id, user, body.name, body.description)

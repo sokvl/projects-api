@@ -32,3 +32,11 @@ class ProjectRepository:
         )
         result = (await self.session.scalars(query)).all()
         return result
+
+    async def get_for_member(self, project_id: uuid.UUID, user_id: uuid.UUID) -> Project | None:
+        query = (
+            select(Project)
+            .join(ProjectMember)
+            .where(Project.id == project_id, ProjectMember.user_id == user_id)
+        )
+        return await self.session.scalar(query)
