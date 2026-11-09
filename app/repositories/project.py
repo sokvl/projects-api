@@ -1,7 +1,7 @@
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -32,3 +32,17 @@ class ProjectRepository:
         )
         result = (await self.session.scalars(query)).all()
         return result
+
+    async def get_for_member(self, project_id: uuid.UUID, user_id: uuid.UUID) -> Project | None:
+        query = (
+            select(Project)
+            .join(ProjectMember)
+            .where(Project.id == project_id, ProjectMember.user_id == user_id)
+        )
+        return await self.session.scalar(query)
+
+    async def get_member(self, project_id: uuid.UUID, user_id: uuid.UUID) -> ProjectMember | None:
+        return await self.session.get(ProjectMember, (user_id, project_id))
+
+    async def delete(self, project_id: uuid.UUID) -> None:
+        await self.session.execute(delete(Project).where(Project.id == project_id))
