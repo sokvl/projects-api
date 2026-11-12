@@ -6,9 +6,18 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app  # host "db" instead of localhost
+    healthcheck:  # no curl in python:slim
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/db')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s  # migrations run before uvicorn starts
     depends_on:
       db:
         condition: service_healthy
+      s3-init:
+        condition: service_completed_successfully
+
 
   db:
     image: postgres:17
@@ -26,5 +35,39 @@ services:
       timeout: 3s
       retries: 5
 
+  s3:
+    image: ministackorg/ministack:1.5.39  # AWS emulator; healthcheck is built into the image
+    ports:
+      - "4566:4566"  # presigned URLs are opened by the browser on the host
+    environment:  # keep buckets and files as long as pgdata keeps their rows
+      PERSIST_STATE: "1"  # buckets, IAM: snapshot on shutdown, restore on start
+      STATE_DIR: /data/state
+      S3_PERSIST: "1"  # object bytes
+      S3_DATA_DIR: /data/s3
+    volumes:
+      - s3data:/data
+
+  s3-init:
+    image: hashicorp/terraform:1.17.1
+    working_dir: /infra
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        terraform init -input=false -lockfile=readonly -backend-config=path=/state/terraform.tfstate
+        && terraform apply -input=false -auto-approve -var use_emulator=true
+    environment:
+      AWS_ENDPOINT_URL: http://s3:4566
+      AWS_ACCESS_KEY_ID: test  # emulator accepts any credentials
+      AWS_SECRET_ACCESS_KEY: test
+      TF_DATA_DIR: /state/.terraform
+    volumes:
+      - ./infra/terraform:/infra:ro,z  # z: SELinux label for the bind mount
+      - tfstate:/state  # state must live as long as s3data
+    depends_on:
+      s3:
+        condition: service_healthy
+
 volumes:
   pgdata:
+  s3data:
+  tfstate:
