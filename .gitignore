@@ -224,3 +224,8 @@ __marimo__/
 
 # Project
 docs/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
