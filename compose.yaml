@@ -18,6 +18,17 @@ services:
       s3-init:
         condition: service_completed_successfully
 
+  ui:
+    build:
+      context: .
+      target: ui
+    ports:
+      - "8080:8080"
+    environment:
+      API_URL: http://api:8000  # service name inside the compose network
+      UI_STORAGE_SECRET: local-dev-only  # signs the browser session cookie; local development only
+    depends_on:
+      - api
 
   db:
     image: postgres:17
