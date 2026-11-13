@@ -28,7 +28,7 @@ def test_decode_returns_user_id_from_created_token() -> None:
 INVALID_TOKENS = {
     "expired": sign(payload(exp=datetime.now(UTC) - timedelta(minutes=1))),
     "wrong_secret": sign(payload(), secret="another-secret-that-is-long-enough-123"),
-    "alg_none": jwt.encode(payload(), None, algorithm="none"),
+    "alg_none": jwt.encode(payload(), "", algorithm="none"),
     "missing_exp": sign({k: v for k, v in payload().items() if k != "exp"}),
     "missing_sub": sign({k: v for k, v in payload().items() if k != "sub"}),
     "sub_not_uuid": sign(payload(sub="123")),

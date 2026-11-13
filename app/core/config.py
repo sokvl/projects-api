@@ -15,5 +15,10 @@ class Settings(BaseSettings):
     pool_pre_ping: bool = True
     jwt_expire_minutes: int = 60
 
+    s3_region: str
+    s3_bucket_name: str
+    s3_public_url: str | None = None
+    s3_api_url: str | None = None
+
 
 settings = Settings()
