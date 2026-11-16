@@ -14,7 +14,8 @@ from app.storage.s3 import S3Storage, StorageError
 
 logger = logging.getLogger(__name__)
 
-FILE_LIMIT = 50 * 1024 * 1024  # 50 MB
+PROJECT_SIZE_LIMIT = 50 * 1024 * 1024
+TYPE_HEADER_BYTES = 8
 
 
 class DocumentService:
@@ -33,36 +34,20 @@ class DocumentService:
     async def upload(
         self, project_id: uuid.UUID, user: User, files: list[UploadFile]
     ) -> list[Document]:
-        if await self.projects.get_for_member(project_id, user.id) is None:
+        if await self.projects.get_for_member(project_id, user.id, lock=True) is None:
             raise NotFoundError("Project or member not found")
 
-        documents: list[Document] = []
-        uploaded_keys: list[str] = []
+        documents = [await self._prepare(project_id, file) for file in files]
 
-        curr_size = await self.documents.get_project_files_total_size_bytes(project_id)
-        files_size = sum(file.size or 0 for file in files)
-        if files_size + curr_size > FILE_LIMIT:
+        used = await self.documents.get_project_files_total_size_bytes(project_id)
+        if used + sum(document.size_bytes for document in documents) > PROJECT_SIZE_LIMIT:
             raise FileTooLargeError("Total project file size exceeds the 50 MB limit")
 
+        uploaded_keys: list[str] = []
         try:
-            for file in files:
-                doc_id = uuid.uuid4()
-                key = f"projects/{project_id}/{doc_id}"
-                data = await file.read()
-                content_type = detect_content_type(data)
-                await self.s3_storage.upload_file(key=key, data=data, content_type=content_type)
-                uploaded_keys.append(key)
-                documents.append(
-                    Document(
-                        id=doc_id,
-                        project_id=project_id,
-                        filename=file.filename or "unnamed",
-                        s3_key=key,
-                        content_type=content_type,
-                        size_bytes=len(data),
-                    )
-                )
-
+            for file, document in zip(files, documents, strict=True):
+                await self.s3_storage.upload_file(document.s3_key, file.file, document.content_type)
+                uploaded_keys.append(document.s3_key)
             await self.documents.add_all(documents)
             await self.session.commit()
         except Exception:
@@ -78,6 +63,25 @@ class DocumentService:
         return self.s3_storage.generate_presigned_download_url(
             document.s3_key, document.filename, inline=document.content_type == PDF
         )
+
+    async def _prepare(self, project_id: uuid.UUID, file: UploadFile) -> Document:
+        content_type = detect_content_type(await file.read(TYPE_HEADER_BYTES))
+        await file.seek(0)
+        document_id = uuid.uuid4()
+        return Document(
+            id=document_id,
+            project_id=project_id,
+            filename=(file.filename or "unnamed")[:255],
+            s3_key=f"projects/{project_id}/{document_id}",
+            content_type=content_type,
+            size_bytes=self._size(file),
+        )
+
+    @staticmethod
+    def _size(file: UploadFile) -> int:
+        if file.size is None:
+            raise ValueError("Upload size unknown")
+        return file.size
 
     async def _delete_uploaded(self, keys: list[str]) -> None:
         for key in keys:

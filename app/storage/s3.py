@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from functools import partial
+from typing import BinaryIO
 from urllib.parse import quote
 
 import boto3
@@ -41,7 +42,7 @@ class S3Storage:
             ExpiresIn=300,
         )
 
-    async def upload_file(self, key: str, data: bytes, content_type: str) -> None:
+    async def upload_file(self, key: str, data: BinaryIO, content_type: str) -> None:
         await self._run(
             partial(
                 self.s3_regular_client.put_object,

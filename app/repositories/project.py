@@ -33,12 +33,17 @@ class ProjectRepository:
         result = (await self.session.scalars(query)).all()
         return result
 
-    async def get_for_member(self, project_id: uuid.UUID, user_id: uuid.UUID) -> Project | None:
+    async def get_for_member(
+        self, project_id: uuid.UUID, user_id: uuid.UUID, *, lock: bool = False
+    ) -> Project | None:
         query = (
             select(Project)
             .join(ProjectMember)
             .where(Project.id == project_id, ProjectMember.user_id == user_id)
         )
+        if lock:
+            # FOR NO KEY UPDATE OF projects: queues uploads, but not inserts that reference the row
+            query = query.with_for_update(of=Project, key_share=True)
         return await self.session.scalar(query)
 
     async def get_member(self, project_id: uuid.UUID, user_id: uuid.UUID) -> ProjectMember | None:

@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from io import BytesIO
 from typing import Final
 from unittest.mock import MagicMock
 from urllib.parse import parse_qs, urlparse
@@ -63,7 +64,7 @@ def keys(s3: S3Client) -> list[str]:
 
 
 async def test_upload_file_stores_body_and_content_type(storage: S3Storage, s3: S3Client) -> None:
-    await storage.upload_file("projects/a/doc", b"%PDF-1.7", "application/pdf")
+    await storage.upload_file("projects/a/doc", BytesIO(b"%PDF-1.7"), "application/pdf")
 
     obj = s3.get_object(Bucket=BUCKET, Key="projects/a/doc")
     assert obj["Body"].read() == b"%PDF-1.7"
@@ -71,9 +72,9 @@ async def test_upload_file_stores_body_and_content_type(storage: S3Storage, s3: 
 
 
 async def test_upload_file_overwrites_existing_key(storage: S3Storage, s3: S3Client) -> None:
-    await storage.upload_file("projects/a/doc", b"old", "application/pdf")
+    await storage.upload_file("projects/a/doc", BytesIO(b"old"), "application/pdf")
 
-    await storage.upload_file("projects/a/doc", b"new", "application/pdf")
+    await storage.upload_file("projects/a/doc", BytesIO(b"new"), "application/pdf")
 
     assert s3.get_object(Bucket=BUCKET, Key="projects/a/doc")["Body"].read() == b"new"
 
@@ -84,7 +85,7 @@ async def test_upload_file_to_missing_bucket_raises_storage_error(
     storage = S3Storage(s3_settings.model_copy(update={"s3_bucket_name": "missing"}))
 
     with pytest.raises(StorageError) as exc_info:
-        await storage.upload_file("projects/a/doc", b"%PDF", "application/pdf")
+        await storage.upload_file("projects/a/doc", BytesIO(b"%PDF"), "application/pdf")
 
     assert isinstance(exc_info.value.__cause__, ClientError)
 
