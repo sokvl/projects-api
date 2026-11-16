@@ -5,18 +5,16 @@ from collections.abc import Sequence
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.errors import FileTooLargeError, NotFoundError
 from app.models.document import Document
 from app.models.user import User
 from app.repositories.document import DocumentRepository
 from app.repositories.project import ProjectRepository
-from app.services.file_types import PDF, detect_content_type
+from app.services.file_types import HEADER_BYTES, PDF, detect_content_type
 from app.storage.s3 import S3Storage, StorageError, project_prefix
 
 logger = logging.getLogger(__name__)
-
-PROJECT_SIZE_LIMIT = 50 * 1024 * 1024
-TYPE_HEADER_BYTES = 8
 
 
 class DocumentService:
@@ -101,7 +99,7 @@ class DocumentService:
         )
 
     async def _prepare(self, project_id: uuid.UUID, file: UploadFile) -> Document:
-        content_type = detect_content_type(await file.read(TYPE_HEADER_BYTES))
+        content_type = detect_content_type(await file.read(HEADER_BYTES))
         await file.seek(0)
         document_id = uuid.uuid4()
         return Document(
@@ -121,8 +119,8 @@ class DocumentService:
 
     async def _ensure_fits(self, project_id: uuid.UUID, added_bytes: int) -> None:
         used = await self.documents.get_project_files_total_size_bytes(project_id)
-        if used + added_bytes > PROJECT_SIZE_LIMIT:
-            raise FileTooLargeError("Total project file size exceeds the 50 MB limit")
+        if used + added_bytes > settings.project_size_limit_bytes:
+            raise FileTooLargeError("Total project file size exceeds the project limit")
 
     async def _delete_objects(self, keys: list[str]) -> None:
         for key in keys:

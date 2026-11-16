@@ -6,18 +6,20 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import UploadFile
 
+from app.core.config import settings
 from app.core.errors import FileTooLargeError, InvalidFileTypeError, NotFoundError
 from app.models.document import Document
 from app.models.project import Project
 from app.models.user import User
-from app.services.document import PROJECT_SIZE_LIMIT, DocumentService
+from app.services.document import DocumentService
 from app.services.file_types import DOCX, PDF
 from app.storage.s3 import StorageError
 
 PROJECT_ID = uuid.uuid4()
 PDF_BYTES = b"%PDF-1.7 content"
 DOCX_BYTES = b"PK\x03\x04 content"
-HALF = PROJECT_SIZE_LIMIT // 2
+LIMIT = settings.project_size_limit_bytes
+HALF = LIMIT // 2
 
 
 def upload(data: bytes = PDF_BYTES, filename: str | None = "a.pdf", size: int = -1) -> UploadFile:
@@ -115,8 +117,8 @@ async def test_upload_stores_every_file_and_commits(
     [
         ([upload(), upload(b"plain text", "notes.txt")], 0, InvalidFileTypeError),
         ([upload(b"")], 0, InvalidFileTypeError),
-        ([upload(size=11)], PROJECT_SIZE_LIMIT - 10, FileTooLargeError),
-        ([upload(size=PROJECT_SIZE_LIMIT + 1)], 0, FileTooLargeError),
+        ([upload(size=11)], LIMIT - 10, FileTooLargeError),
+        ([upload(size=LIMIT + 1)], 0, FileTooLargeError),
         ([upload(size=HALF), upload(size=HALF + 1)], 0, FileTooLargeError),
         ([UploadFile(BytesIO(PDF_BYTES), filename="a.pdf")], 0, ValueError),
     ],
@@ -151,7 +153,7 @@ async def test_rejected_upload_sends_nothing_to_s3(
 @pytest.mark.parametrize(
     ("files", "used", "expected_filename"),
     [
-        ([upload(size=10)], PROJECT_SIZE_LIMIT - 10, "a.pdf"),
+        ([upload(size=10)], LIMIT - 10, "a.pdf"),
         ([upload(filename="x" * 300 + ".pdf")], 0, "x" * 255),
         ([upload(filename=None)], 0, "unnamed"),
     ],
@@ -278,3 +280,198 @@ async def test_download_url_opens_pdf_inline_and_downloads_docx(
     storage.generate_presigned_download_url.assert_called_once_with(
         "projects/p/d", "raport.pdf", inline=inline
     )
+
+
+OLD_KEY = f"projects/{PROJECT_ID}/old"
+
+
+@pytest.fixture
+def stored(documents: AsyncMock) -> Document:
+    document = Document(
+        id=uuid.uuid4(),
+        project_id=PROJECT_ID,
+        filename="old.pdf",
+        s3_key=OLD_KEY,
+        content_type=PDF,
+        size_bytes=10,
+    )
+    documents.get_for_member.return_value = document
+    return document
+
+
+async def test_replace_uploads_new_object_commits_then_deletes_old(
+    service: DocumentService,
+    projects: AsyncMock,
+    storage: AsyncMock,
+    session: AsyncMock,
+    user: User,
+    stored: Document,
+) -> None:
+    stored_bodies: dict[str, bytes] = {}
+
+    async def read_body(key: str, data: BinaryIO, content_type: str) -> None:
+        stored_bodies[key] = data.read()
+
+    async def commit() -> None:
+        storage.delete_file.assert_not_awaited()
+
+    storage.upload_file.side_effect = read_body
+    session.commit.side_effect = commit
+
+    result = await service.replace(stored.id, user, upload(DOCX_BYTES, "new.docx"))
+
+    projects.get_for_member.assert_awaited_once_with(PROJECT_ID, user.id, lock=True)
+    assert result is stored
+    assert (result.filename, result.content_type, result.size_bytes) == (
+        "new.docx",
+        DOCX,
+        len(DOCX_BYTES),
+    )
+    assert result.s3_key != OLD_KEY
+    assert result.s3_key.startswith(f"projects/{PROJECT_ID}/")
+    assert stored_bodies == {result.s3_key: DOCX_BYTES}
+    session.commit.assert_awaited_once()
+    storage.delete_file.assert_awaited_once_with(OLD_KEY)
+
+
+@pytest.mark.parametrize(
+    ("document_found", "still_member", "file", "used", "error"),
+    [
+        (False, True, upload(), 0, NotFoundError),
+        (True, False, upload(), 0, NotFoundError),
+        (True, True, upload(b"plain text", "notes.txt"), 0, InvalidFileTypeError),
+        (True, True, upload(size=16), LIMIT - 5, FileTooLargeError),
+    ],
+    ids=["no-access", "membership-gone-at-lock", "invalid-type", "difference-over-limit"],
+)
+async def test_rejected_replace_keeps_the_old_file(
+    service: DocumentService,
+    projects: AsyncMock,
+    documents: AsyncMock,
+    storage: AsyncMock,
+    session: AsyncMock,
+    user: User,
+    stored: Document,
+    document_found: bool,
+    still_member: bool,
+    file: UploadFile,
+    used: int,
+    error: type[Exception],
+) -> None:
+    if not document_found:
+        documents.get_for_member.return_value = None
+    if not still_member:
+        projects.get_for_member.return_value = None
+    documents.get_project_files_total_size_bytes.return_value = used
+
+    with pytest.raises(error):
+        await service.replace(stored.id, user, file)
+
+    assert (stored.s3_key, stored.filename) == (OLD_KEY, "old.pdf")
+    storage.upload_file.assert_not_awaited()
+    storage.delete_file.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("used", "new_size"),
+    [(LIMIT, 4), (LIMIT, 10), (LIMIT - 5, 15)],
+    ids=["smaller-in-full-project", "same-size-in-full-project", "difference-exactly-at-limit"],
+)
+async def test_replace_counts_only_the_size_difference(
+    service: DocumentService,
+    documents: AsyncMock,
+    session: AsyncMock,
+    user: User,
+    stored: Document,
+    used: int,
+    new_size: int,
+) -> None:
+    documents.get_project_files_total_size_bytes.return_value = used
+
+    await service.replace(stored.id, user, upload(size=new_size))
+
+    session.commit.assert_awaited_once()
+
+
+async def test_replace_failing_commit_deletes_new_object_and_keeps_old(
+    service: DocumentService,
+    storage: AsyncMock,
+    session: AsyncMock,
+    user: User,
+    stored: Document,
+) -> None:
+    session.commit.side_effect = RuntimeError("commit failed")
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await service.replace(stored.id, user, upload())
+
+    new_key = storage.upload_file.await_args.args[0]
+    storage.delete_file.assert_awaited_once_with(new_key)
+    assert new_key != OLD_KEY
+
+
+async def test_replace_failing_s3_upload_changes_nothing(
+    service: DocumentService,
+    storage: AsyncMock,
+    session: AsyncMock,
+    user: User,
+    stored: Document,
+) -> None:
+    storage.upload_file.side_effect = StorageError("S3 down")
+
+    with pytest.raises(StorageError):
+        await service.replace(stored.id, user, upload(DOCX_BYTES, "new.docx"))
+
+    assert (stored.s3_key, stored.filename, stored.content_type) == (OLD_KEY, "old.pdf", PDF)
+    storage.delete_file.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
+async def test_delete_without_access_raises_not_found(
+    service: DocumentService,
+    documents: AsyncMock,
+    storage: AsyncMock,
+    session: AsyncMock,
+    user: User,
+) -> None:
+    documents.get_for_member.return_value = None
+    document_id = uuid.uuid4()
+
+    with pytest.raises(NotFoundError):
+        await service.delete(document_id, user)
+
+    documents.get_for_member.assert_awaited_once_with(document_id, user.id)
+    documents.delete.assert_not_awaited()
+    session.commit.assert_not_awaited()
+    storage.delete_file.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("s3_effect", "logged"),
+    [(None, False), (StorageError("S3 down"), True)],
+    ids=["s3-ok", "s3-fails-only-logged"],
+)
+async def test_delete_commits_the_row_before_deleting_the_object(
+    service: DocumentService,
+    documents: AsyncMock,
+    storage: AsyncMock,
+    session: AsyncMock,
+    user: User,
+    stored: Document,
+    caplog: pytest.LogCaptureFixture,
+    s3_effect: Exception | None,
+    logged: bool,
+) -> None:
+    async def commit() -> None:
+        storage.delete_file.assert_not_awaited()
+
+    session.commit.side_effect = commit
+    storage.delete_file.side_effect = s3_effect
+
+    await service.delete(stored.id, user)
+
+    documents.delete.assert_awaited_once_with(stored.id)
+    session.commit.assert_awaited_once()
+    storage.delete_file.assert_awaited_once_with(OLD_KEY)
+    assert ("Could not delete orphaned object" in caplog.text) is logged

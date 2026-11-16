@@ -20,5 +20,7 @@ class Settings(BaseSettings):
     s3_public_url: str | None = None
     s3_api_url: str | None = None
 
+    project_size_limit_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
+
 
 settings = Settings()

@@ -8,6 +8,7 @@ from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.models.project import Project, ProjectMember, ProjectRole
 from app.models.user import User
 from app.services.project import ProjectService
+from app.storage.s3 import StorageError
 from tests.unit.fakes import FakeDriverError
 
 PROJECT_ID = uuid.uuid4()
@@ -213,3 +214,49 @@ async def test_invite_existing_member_raises_conflict(
         )
 
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("s3_effect", "logged"),
+    [(None, False), (StorageError("S3 down"), True)],
+    ids=["s3-ok", "s3-fails-only-logged"],
+)
+async def test_delete_as_owner_removes_project_files_after_commit(
+    projects: AsyncMock,
+    users: AsyncMock,
+    session: AsyncMock,
+    owner: User,
+    caplog: pytest.LogCaptureFixture,
+    s3_effect: Exception | None,
+    logged: bool,
+) -> None:
+    storage = AsyncMock()
+    storage.delete_prefix.side_effect = s3_effect
+    projects.get_member.return_value = membership(ProjectRole.OWNER)
+
+    async def commit() -> None:
+        storage.delete_prefix.assert_not_awaited()
+
+    session.commit.side_effect = commit
+
+    await ProjectService(projects, users, storage, session).delete(PROJECT_ID, owner)
+
+    storage.delete_prefix.assert_awaited_once_with(f"projects/{PROJECT_ID}/")
+    assert ("Could not delete objects of project" in caplog.text) is logged
+
+
+@pytest.mark.parametrize("role", [None, ProjectRole.PARTICIPANT], ids=["outsider", "participant"])
+async def test_refused_delete_leaves_project_files(
+    projects: AsyncMock,
+    users: AsyncMock,
+    session: AsyncMock,
+    owner: User,
+    role: ProjectRole | None,
+) -> None:
+    storage = AsyncMock()
+    projects.get_member.return_value = membership(role) if role else None
+
+    with pytest.raises((NotFoundError, ForbiddenError)):
+        await ProjectService(projects, users, storage, session).delete(PROJECT_ID, owner)
+
+    storage.delete_prefix.assert_not_awaited()
