@@ -52,3 +52,17 @@ async def download_document(
 ) -> RedirectResponse:
     url = await service.get_download_url(document_id, user)
     return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+
+@router.put("/document/{document_id}", response_model=DocumentOut)
+async def replace_document(
+    document_id: uuid.UUID, file: UploadFile, user: CurrentUserDep, service: DocumentServiceDep
+) -> Document:
+    return await service.replace(document_id, user, file)
+
+
+@router.delete("/document/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(
+    document_id: uuid.UUID, user: CurrentUserDep, service: DocumentServiceDep
+) -> None:
+    await service.delete(document_id, user)

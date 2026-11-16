@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Callable
 from functools import partial
 from typing import BinaryIO
@@ -11,6 +12,10 @@ from botocore.exceptions import BotoCoreError, ClientError
 from app.core.config import Settings, settings
 
 s3_limiter = CapacityLimiter(10)
+
+
+def project_prefix(project_id: uuid.UUID) -> str:
+    return f"projects/{project_id}/"
 
 
 class StorageError(Exception):

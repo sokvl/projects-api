@@ -1,7 +1,7 @@
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document
@@ -16,6 +16,9 @@ class DocumentRepository:
         self.session.add_all(documents)
         await self.session.flush()
         return documents
+
+    async def delete(self, document_id: uuid.UUID) -> None:
+        await self.session.execute(delete(Document).where(Document.id == document_id))
 
     async def get_project_files_total_size_bytes(self, project_id: uuid.UUID) -> int:
         query = select(func.coalesce(func.sum(Document.size_bytes), 0)).where(

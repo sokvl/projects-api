@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.deps import CurrentUserDep
+from app.api.deps import CurrentUserDep, S3StorageDep
 from app.db.session import DBSessionDep
 from app.models.project import Project, ProjectRole
 from app.repositories.project import ProjectRepository
@@ -16,8 +16,8 @@ from app.services.project import ProjectService
 router = APIRouter(tags=["projects"])
 
 
-async def get_project_service(session: DBSessionDep) -> ProjectService:
-    return ProjectService(ProjectRepository(session), UserRepository(session), session)
+async def get_project_service(session: DBSessionDep, s3_storage: S3StorageDep) -> ProjectService:
+    return ProjectService(ProjectRepository(session), UserRepository(session), s3_storage, session)
 
 
 ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]

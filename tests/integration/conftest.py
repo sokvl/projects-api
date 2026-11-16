@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from alembic.config import Config
@@ -13,6 +14,7 @@ from app.core.config import settings
 from app.db.session import get_session
 from app.main import app
 from app.models import Base
+from app.storage.s3 import S3Storage, get_storage
 
 dev_url = make_url(settings.database_url)
 test_engine = create_async_engine(dev_url.set(database=f"{dev_url.database}_test"))
@@ -74,6 +76,7 @@ def sql_statements() -> Iterator[list[str]]:
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
     app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_storage] = lambda: MagicMock(spec=S3Storage)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
     app.dependency_overrides.clear()
