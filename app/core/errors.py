@@ -16,3 +16,11 @@ class ConflictError(DomainError):
 
 class UnauthorizedError(DomainError):
     pass
+
+
+class FileTooLargeError(DomainError):
+    pass
+
+
+class InvalidFileTypeError(DomainError):
+    pass

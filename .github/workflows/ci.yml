@@ -51,6 +51,8 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://app:app@localhost:5432/app
       JWT_SECRET: ci-test-secret-not-used-anywhere-else-0123456789
+      S3_REGION: eu-central-1
+      S3_BUCKET_NAME: documents
     steps:
       - uses: actions/checkout@v4
 

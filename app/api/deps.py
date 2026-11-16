@@ -8,8 +8,11 @@ from app.core.security import decode_access_token
 from app.db.session import DBSessionDep
 from app.models.user import User
 from app.repositories.user import UserRepository
+from app.storage.s3 import S3Storage, get_storage
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+S3StorageDep = Annotated[S3Storage, Depends(get_storage)]
 
 
 async def get_user_repository(session: DBSessionDep) -> UserRepository:

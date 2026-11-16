@@ -1,3 +1,4 @@
+import logging
 import uuid
 from collections.abc import Sequence
 
@@ -10,6 +11,9 @@ from app.models.project import Project, ProjectMember, ProjectRole
 from app.models.user import User
 from app.repositories.project import ProjectRepository
 from app.repositories.user import UserRepository
+from app.storage.s3 import S3Storage, StorageError, project_prefix
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectService:
@@ -17,10 +21,12 @@ class ProjectService:
         self,
         projects_repository: ProjectRepository,
         users_repository: UserRepository,
+        s3_storage: S3Storage,
         session: AsyncSession,
     ) -> None:
         self.projects = projects_repository
         self.users = users_repository
+        self.s3_storage = s3_storage
         self.session = session
 
     async def create(self, owner: User, name: str, description: str | None) -> Project:
@@ -52,6 +58,10 @@ class ProjectService:
         await self._require_owner(project_id, user)
         await self.projects.delete(project_id)
         await self.session.commit()
+        try:
+            await self.s3_storage.delete_prefix(project_prefix(project_id))
+        except StorageError:
+            logger.exception("Could not delete objects of project %s", project_id)
 
     async def invite(self, project_id: uuid.UUID, owner: User, login: str) -> ProjectMember:
         await self._require_owner(project_id, owner)
