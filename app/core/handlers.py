@@ -5,7 +5,9 @@ from fastapi.responses import JSONResponse
 from app.core.errors import (
     ConflictError,
     DomainError,
+    FileTooLargeError,
     ForbiddenError,
+    InvalidFileTypeError,
     NotFoundError,
     UnauthorizedError,
 )
@@ -15,6 +17,8 @@ STATUS_CODES: dict[type[DomainError], int] = {
     NotFoundError: status.HTTP_404_NOT_FOUND,
     ForbiddenError: status.HTTP_403_FORBIDDEN,
     ConflictError: status.HTTP_409_CONFLICT,
+    FileTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
+    InvalidFileTypeError: status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
 }
 
 

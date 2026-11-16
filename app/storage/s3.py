@@ -32,8 +32,9 @@ class S3Storage:
             "s3", region_name=settings.s3_region, endpoint_url=settings.s3_public_url, config=config
         )
 
-    def generate_presigned_download_url(self, key: str, filename: str) -> str:
-        disposition = f"attachment; filename*=UTF-8''{quote(filename, safe='')}"
+    def generate_presigned_download_url(self, key: str, filename: str, inline: bool = False) -> str:
+        kind = "inline" if inline else "attachment"
+        disposition = f"{kind}; filename*=UTF-8''{quote(filename, safe='')}"
         return self.s3_signer_client.generate_presigned_url(
             "get_object",
             Params={"Bucket": self.bucket, "Key": key, "ResponseContentDisposition": disposition},

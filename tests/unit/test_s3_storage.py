@@ -194,3 +194,11 @@ def test_presigned_url_encodes_filename(
     url = urlparse(emulator_storage.generate_presigned_download_url("projects/a/doc", filename))
 
     assert parse_qs(url.query)["response-content-disposition"] == [expected]
+
+
+def test_presigned_url_inline_keeps_filename(emulator_storage: S3Storage) -> None:
+    url = urlparse(
+        emulator_storage.generate_presigned_download_url("projects/a/doc", "a.pdf", inline=True)
+    )
+
+    assert parse_qs(url.query)["response-content-disposition"] == ["inline; filename*=UTF-8''a.pdf"]
