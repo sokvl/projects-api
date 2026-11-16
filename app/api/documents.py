@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Sequence
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, UploadFile, status
@@ -36,6 +37,13 @@ async def upload_documents(
     service: DocumentServiceDep,
 ) -> list[Document]:
     return await service.upload(project_id, user, files)
+
+
+@router.get("/project/{project_id}/documents", response_model=list[DocumentOut])
+async def list_documents(
+    project_id: uuid.UUID, user: CurrentUserDep, service: DocumentServiceDep
+) -> Sequence[Document]:
+    return await service.list_for_project(project_id, user)
 
 
 @router.get("/document/{document_id}", status_code=status.HTTP_307_TEMPORARY_REDIRECT)

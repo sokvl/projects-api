@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,15 @@ class DocumentRepository:
             Document.project_id == project_id
         )
         return int(await self.session.scalar(query) or 0)
+
+    async def list_for_project(self, project_id: uuid.UUID) -> Sequence[Document]:
+        query = (
+            select(Document)
+            .where(Document.project_id == project_id)
+            # now() is the transaction start, so files from one upload share created_at
+            .order_by(Document.created_at.desc(), Document.id)
+        )
+        return (await self.session.scalars(query)).all()
 
     async def get_for_member(self, document_id: uuid.UUID, user_id: uuid.UUID) -> Document | None:
         query = (

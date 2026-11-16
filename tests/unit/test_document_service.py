@@ -218,6 +218,27 @@ async def test_failed_cleanup_is_logged_and_the_original_error_wins(
     assert "Could not delete orphaned object" in caplog.text
 
 
+async def test_list_checks_access_without_locking_and_returns_documents(
+    service: DocumentService, projects: AsyncMock, documents: AsyncMock, user: User
+) -> None:
+    result = await service.list_for_project(PROJECT_ID, user)
+
+    projects.get_for_member.assert_awaited_once_with(PROJECT_ID, user.id)
+    documents.list_for_project.assert_awaited_once_with(PROJECT_ID)
+    assert result is documents.list_for_project.return_value
+
+
+async def test_list_without_access_raises_not_found(
+    service: DocumentService, projects: AsyncMock, documents: AsyncMock, user: User
+) -> None:
+    projects.get_for_member.return_value = None
+
+    with pytest.raises(NotFoundError):
+        await service.list_for_project(PROJECT_ID, user)
+
+    documents.list_for_project.assert_not_awaited()
+
+
 async def test_download_url_without_access_raises_not_found(
     service: DocumentService, documents: AsyncMock, storage: AsyncMock, user: User
 ) -> None:

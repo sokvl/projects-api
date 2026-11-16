@@ -1,5 +1,6 @@
 import logging
 import uuid
+from collections.abc import Sequence
 
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,6 +56,11 @@ class DocumentService:
             raise
 
         return documents
+
+    async def list_for_project(self, project_id: uuid.UUID, user: User) -> Sequence[Document]:
+        if await self.projects.get_for_member(project_id, user.id) is None:
+            raise NotFoundError("Project or member not found")
+        return await self.documents.list_for_project(project_id)
 
     async def get_download_url(self, document_id: uuid.UUID, user: User) -> str:
         document = await self.documents.get_for_member(document_id, user.id)
