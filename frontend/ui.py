@@ -13,14 +13,47 @@ from nicegui import app, events, ui
 API_BASE = os.environ.get("API_URL", "http://localhost:8000")
 STORAGE_SECRET = os.environ.get("UI_STORAGE_SECRET", "local-dev-only")
 
-# Contract from backlog E4-03; the endpoint is not in the API yet.
 UPLOAD_PATH = "/project/{project_id}/documents"
 UPLOAD_FIELD = "files"
-UPLOAD_ACCEPT = ".pdf,.docx"
-UPLOAD_MAX_FILES = 10
-UPLOAD_MAX_FILE_SIZE = 10 * 1024 * 1024
+# The API checks the real project total; this only stops a single oversized pick early.
+UPLOAD_MAX_TOTAL_SIZE = 50 * 1024 * 1024
 
-GRADIENT = "linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #db2777 100%)"
+# Same list as INLINE_TYPES in app/services/document.py: the API serves these inline.
+PREVIEW_TYPES = {
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "text/plain",
+}
+
+FONTS = (
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700'
+    '&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">'
+)
+
+THEME_CSS = """
+body { font-family: 'Inter', system-ui, sans-serif; background: #fafafa; color: #09090b; }
+code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.8rem; }
+.q-card { box-shadow: none !important; border: 1px solid #e4e4e7; border-radius: 12px; }
+.q-btn { border-radius: 8px; text-transform: none; font-weight: 500; letter-spacing: 0; }
+.q-field--outlined .q-field__control { border-radius: 8px; }
+.q-field--outlined .q-field__control:before { border-color: #e4e4e7; }
+.q-header { border-bottom: 1px solid #e4e4e7; }
+.q-drawer { background: #fafafa !important; }
+.q-tab { text-transform: none; font-weight: 500; }
+.q-chip { border-radius: 6px; }
+.q-chip--outline { border-color: #e4e4e7 !important; color: #52525b !important; }
+.q-uploader { box-shadow: none; border: 1px dashed #d4d4d8 !important; border-radius: 10px; }
+.q-uploader__header { background: #fafafa !important; color: #09090b !important; }
+.q-notification { border-radius: 10px; }
+.q-table th { font-weight: 600; color: #71717a; }
+.auth-aside { display: none !important; }
+@media (min-width: 1024px) { .auth-aside { display: flex !important; } }
+@media (min-width: 1024px) { .auth-mobile-brand { display: none !important; } }
+"""
 
 
 async def api_call(
@@ -83,17 +116,44 @@ def day(value: str) -> str:
     return value[:10]
 
 
+def file_icon(content_type: str) -> str:
+    if content_type == "application/pdf":
+        return "picture_as_pdf"
+    if content_type.startswith("image/"):
+        return "image"
+    if content_type.startswith("text/"):
+        return "description"
+    return "insert_drive_file"
+
+
 def size_text(size: int) -> str:
     if size >= 1024 * 1024:
         return f"{size / 1024 / 1024:.1f} MB"
     return f"{max(size // 1024, 1)} KB"
 
 
+def brand(dark: bool = False) -> None:
+    mark = "bg-white text-zinc-950" if dark else "bg-zinc-950 text-white"
+    with ui.row().classes("items-center gap-2 no-wrap"):
+        ui.label("P").classes(
+            f"{mark} w-8 h-8 rounded-lg flex items-center justify-center font-bold"
+        )
+        ui.label("Projects").classes("text-lg font-semibold tracking-tight")
+
+
 @ui.page("/")
 def index() -> None:
-    ui.colors(primary="#4f46e5")
+    ui.colors(
+        primary="#09090b",
+        secondary="#52525b",
+        positive="#16a34a",
+        negative="#dc2626",
+        warning="#d97706",
+        info="#52525b",
+    )
+    ui.add_head_html(FONTS)
+    ui.add_css(THEME_CSS)
     ui.query(".nicegui-content").classes("p-0 gap-0")
-    ui.query("body").classes("bg-slate-50")
 
     view = {"page": "projects", "query": ""}
     projects: list[dict[str, Any]] = []
@@ -106,6 +166,8 @@ def index() -> None:
     def apply_state() -> None:
         header.set_visibility(logged_in())
         drawer.set_visibility(logged_in())
+        drawer.value = logged_in()
+        mark_nav()
         if logged_in():
             username = app.storage.user.get("user", "")
             avatar_label.set_text(username[:1].upper())
@@ -141,6 +203,8 @@ def index() -> None:
             raise
         if log:
             record(method, path, response.status_code, started)
+        if response.is_redirect:
+            return response.status_code, response.headers["location"]
         response.raise_for_status()
         return response.status_code, response.json() if response.content else None
 
@@ -187,19 +251,33 @@ def index() -> None:
                 await login_user(reg_login.value, reg_pass.value)
             reg_btn.props(remove="loading")
 
-        with (
-            ui.column()
-            .classes("w-full items-center justify-center gap-6 p-4")
-            .style(f"min-height:100vh; background:{GRADIENT};")
-        ):
-            with ui.row().classes("items-center gap-3 text-white"):
-                ui.icon("rocket_launch", size="2.5rem")
-                ui.label("Projects").classes("text-4xl font-bold")
-            ui.label("Manage your projects and collaborate with your team.").classes(
-                "text-white/80 -mt-4"
-            )
-            with ui.card().classes("w-full max-w-md p-6 rounded-2xl shadow-2xl"):
-                with ui.tabs().classes("w-full") as tabs:
+        with ui.element("div").classes("w-full grid lg:grid-cols-2").style("min-height:100vh"):
+            with ui.column().classes("auth-aside bg-zinc-950 text-white p-12 justify-between"):
+                brand(dark=True)
+                with ui.column().classes("gap-4 max-w-md"):
+                    ui.label("Projects app.").classes(
+                        "text-4xl font-semibold tracking-tight leading-tight"
+                    )
+                    ui.label(
+                        "Create projects, invite your team and keep every file where it belongs."
+                    ).classes("text-zinc-400")
+                ui.label(f"API · {API_BASE}").classes("mono text-zinc-500")
+            with (
+                ui.column().classes("items-center justify-center p-6 bg-white"),
+                ui.column().classes("w-full max-w-sm gap-6"),
+            ):
+                with ui.element("div").classes("auth-mobile-brand"):
+                    brand()
+                with ui.column().classes("gap-1"):
+                    ui.label("Welcome").classes("text-2xl font-semibold tracking-tight")
+                    ui.label("Sign in or create an account to continue.").classes(
+                        "text-zinc-500 text-sm"
+                    )
+                with (
+                    ui.tabs()
+                    .props("align=left dense no-caps")
+                    .classes("w-full border-b border-zinc-200") as tabs
+                ):
                     ui.tab("login", "Sign in")
                     ui.tab("register", "Create account")
                 with ui.tab_panels(tabs, value="login").classes("w-full"):
@@ -214,7 +292,8 @@ def index() -> None:
                         login_btn = (
                             ui.button("Sign in", on_click=do_login)
                             .classes("w-full")
-                            .props("size=lg unelevated")
+                            .props("unelevated")
+                            .classes("h-11")
                         )
                     with ui.tab_panel("register").classes("gap-3 p-0 pt-4"):
                         reg_login = ui.input("Login").props("outlined").classes("w-full")
@@ -232,7 +311,8 @@ def index() -> None:
                         reg_btn = (
                             ui.button("Create account", on_click=do_register)
                             .classes("w-full")
-                            .props("size=lg unelevated")
+                            .props("unelevated")
+                            .classes("h-11")
                         )
 
     # ------------------------------------------------------------ projects
@@ -260,7 +340,7 @@ def index() -> None:
             notify_ok("Project created", status)
             await reload_view()
 
-        with dialog_host, ui.dialog() as dialog, ui.card().classes("w-96 p-6 gap-3 rounded-2xl"):
+        with dialog_host, ui.dialog() as dialog, ui.card().classes("w-96 p-6 gap-3"):
             ui.label("New project").classes("text-xl font-semibold")
             name = ui.input("Name").props("outlined autofocus").classes("w-full")
             desc = ui.textarea("Description").props("outlined").classes("w-full")
@@ -341,7 +421,7 @@ def index() -> None:
                 notify_ok("Project updated", status)
                 await reload_view()
 
-            with dialog_host, ui.dialog() as edit, ui.card().classes("w-96 p-6 gap-3 rounded-2xl"):
+            with dialog_host, ui.dialog() as edit, ui.card().classes("w-96 p-6 gap-3"):
                 ui.label("Edit project").classes("text-xl font-semibold")
                 name = ui.input("Name", value=info["name"]).props("outlined").classes("w-full")
                 desc = (
@@ -354,10 +434,75 @@ def index() -> None:
                     ui.button("Save", on_click=save).props("unelevated")
             edit.open()
 
+        def delete_dialog() -> None:
+            async def delete() -> None:
+                try:
+                    status, _ = await request("DELETE", f"/project/{project_id}", auth=True)
+                except httpx.HTTPError as exc:
+                    notify_error(exc)
+                    return
+                confirm.close()
+                dialog.close()
+                notify_ok(f"Deleted {info['name']}", status)
+                await reload_view()
+
+            with dialog_host, ui.dialog() as confirm, ui.card().classes("w-96 p-6 gap-3"):
+                ui.label("Delete project?").classes("text-xl font-semibold")
+                ui.label(
+                    f"{info['name']} and all its documents will be removed. This cannot be undone."
+                ).classes("text-zinc-600 text-sm")
+                with ui.row().classes("w-full justify-end"):
+                    ui.button("Cancel", on_click=confirm.close).props("flat")
+                    ui.button("Delete", on_click=delete).props("unelevated color=negative")
+            confirm.open()
+
+        async def open_document(doc: dict[str, Any]) -> None:
+            try:
+                status, url = await request("GET", f"/document/{doc['id']}", auth=True)
+            except httpx.HTTPError as exc:
+                notify_error(exc)
+                return
+            if doc["content_type"] not in PREVIEW_TYPES:
+                ui.navigate.to(url)
+                notify_ok(f"Downloading {doc['filename']}", status)
+                return
+            with (
+                dialog_host,
+                ui.dialog() as preview,
+                ui.card().classes("p-0 gap-0 w-[min(92vw,1000px)] max-w-none h-[88vh]"),
+            ):
+                with ui.row().classes(
+                    "w-full items-center justify-between no-wrap px-4 py-3 border-b border-zinc-200"
+                ):
+                    with ui.row().classes("items-center gap-2 no-wrap min-w-0"):
+                        ui.icon(file_icon(doc["content_type"]), color="grey-8")
+                        ui.label(doc["filename"]).classes("font-semibold truncate")
+                        ui.label(status_label(status)).classes("mono text-xs text-zinc-400")
+                    with ui.row().classes("gap-1 no-wrap"):
+                        ui.button(
+                            "Open in new tab",
+                            icon="open_in_new",
+                            on_click=lambda: ui.navigate.to(url, new_tab=True),
+                        ).props("flat dense color=grey-8")
+                        ui.button(icon="close", on_click=preview.close).props(
+                            "flat round dense color=grey-7"
+                        )
+                if doc["content_type"].startswith("image/"):
+                    with ui.element("div").classes(
+                        "w-full grow min-h-0 flex items-center justify-center bg-zinc-50 p-4"
+                    ):
+                        image = ui.element("img").classes("max-w-full max-h-full object-contain")
+                        image.props["src"] = url
+                        image.props["alt"] = doc["filename"]
+                else:
+                    frame = ui.element("iframe").classes("w-full grow border-0 bg-white")
+                    frame.props["src"] = url
+            preview.on("hide", preview.delete)
+            preview.open()
+
         def rejected() -> None:
             ui.notify(
-                f"Only PDF or DOCX, up to {UPLOAD_MAX_FILES} files of "
-                f"{size_text(UPLOAD_MAX_FILE_SIZE)} each",
+                f"Uploads are limited to {size_text(UPLOAD_MAX_TOTAL_SIZE)} per project",
                 type="warning",
             )
 
@@ -365,47 +510,58 @@ def index() -> None:
         def document_list() -> None:
             documents = next((p["documents"] for p in projects if p["id"] == project_id), [])
             if not documents:
-                ui.label("No documents yet").classes("text-slate-400 text-sm")
+                ui.label("No documents yet").classes("text-zinc-400 text-sm")
             for doc in documents:
-                with ui.row().classes("items-center gap-2"):
-                    ui.icon("description", color="primary")
-                    ui.label(doc["filename"])
-                    ui.label(size_text(doc["size_bytes"])).classes("text-xs text-slate-400")
+                viewable = doc["content_type"] in PREVIEW_TYPES
+                with (
+                    ui.row()
+                    .classes(
+                        "w-full items-center gap-3 no-wrap px-3 py-2 rounded-lg cursor-pointer "
+                        "hover:bg-zinc-100 transition-colors"
+                    )
+                    .on("click", lambda d=doc: open_document(d))
+                ):
+                    ui.icon(file_icon(doc["content_type"]), color="grey-8")
+                    with ui.column().classes("gap-0 grow min-w-0"):
+                        ui.label(doc["filename"]).classes("text-sm font-medium truncate")
+                        ui.label(
+                            f"{size_text(doc['size_bytes'])} · {day(doc['created_at'])}"
+                        ).classes("text-xs text-zinc-400")
+                    ui.icon("visibility" if viewable else "download", color="grey-6", size="1.2rem")
 
         with (
             dialog_host,
             ui.dialog() as dialog,
-            ui.card().classes("w-[32rem] max-w-full p-6 gap-3 rounded-2xl"),
+            ui.card().classes("w-[32rem] max-w-full p-6 gap-3"),
         ):
             with ui.row().classes("w-full items-start justify-between no-wrap"):
                 name_label = ui.label(info["name"]).classes("text-2xl font-semibold")
                 with ui.row().classes("gap-1 no-wrap"):
-                    ui.button(icon="edit", on_click=edit_dialog).props("flat round dense").tooltip(
-                        "Edit"
+                    ui.button(icon="edit", on_click=edit_dialog).props(
+                        "flat round dense color=grey-7"
+                    ).tooltip("Edit")
+                    ui.button(icon="close", on_click=dialog.close).props(
+                        "flat round dense color=grey-7"
                     )
-                    ui.button(icon="close", on_click=dialog.close).props("flat round dense")
-            desc_label = ui.label(info["description"] or "No description").classes("text-slate-600")
+            desc_label = ui.label(info["description"] or "No description").classes("text-zinc-600")
             with ui.row().classes("gap-2"):
                 ui.chip(f"Created {day(info['created_at'])}", icon="event").props("outline")
                 updated_chip = ui.chip(f"Updated {day(info['updated_at'])}", icon="update").props(
                     "outline"
                 )
-                ui.chip(f"GET /info · {status_label(info_status)}", icon="http").props(
-                    "outline color=positive"
-                )
+                ui.chip(f"GET /info · {status_label(info_status)}", icon="http").props("outline")
             ui.separator()
             ui.label("Documents").classes("font-semibold")
             document_list()
             uploader = (
                 ui.upload(
                     multiple=True,
-                    max_files=UPLOAD_MAX_FILES,
-                    max_file_size=UPLOAD_MAX_FILE_SIZE,
+                    max_total_size=UPLOAD_MAX_TOTAL_SIZE,
                     on_multi_upload=upload,
                     on_rejected=rejected,
-                    label="PDF or DOCX, up to 10 MB each",
+                    label="Any file type · 50 MB per project",
                 )
-                .props(f'accept="{UPLOAD_ACCEPT}" flat bordered')
+                .props("flat bordered")
                 .classes("w-full")
             )
             ui.separator()
@@ -414,27 +570,37 @@ def index() -> None:
                 invite_input = ui.input("Login").props("outlined dense").classes("grow")
                 invite_input.on("keydown.enter", invite)
                 ui.button("Invite", icon="person_add", on_click=invite).props("unelevated")
+            ui.separator()
+            with ui.row().classes("w-full items-center justify-between no-wrap"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Delete project").classes("font-semibold")
+                    ui.label("Owner only. Removes the project and its documents.").classes(
+                        "text-xs text-zinc-500"
+                    )
+                ui.button("Delete", icon="delete", on_click=delete_dialog).props(
+                    "outline color=negative"
+                )
         dialog.open()
 
     def project_card(project: dict[str, Any]) -> None:
         with (
             ui.card()
-            .classes("cursor-pointer p-5 gap-2 rounded-2xl hover:shadow-xl transition-shadow")
+            .classes("cursor-pointer p-5 gap-3 hover:border-zinc-900 transition-colors")
             .on("click", lambda p=project: project_dialog(p["id"]))
         ):
             with ui.row().classes("items-center gap-3 no-wrap"):
-                with ui.avatar(color="primary", text_color="white", size="md", rounded=True):
+                with ui.avatar(color="grey-3", text_color="grey-10", size="md", rounded=True):
                     ui.label(project["name"][:1].upper())
-                ui.label(project["name"]).classes("text-lg font-semibold truncate")
+                ui.label(project["name"]).classes("text-base font-semibold truncate")
             ui.label(project["description"] or "No description").classes(
-                "text-slate-500 text-sm line-clamp-2"
+                "text-zinc-500 text-sm line-clamp-2"
             )
             ui.space()
             with ui.row().classes("w-full items-center justify-between"):
                 ui.chip(f"{len(project['documents'])} documents", icon="description").props(
                     "outline dense"
                 )
-                ui.label(day(project["updated_at"])).classes("text-xs text-slate-400")
+                ui.label(day(project["updated_at"])).classes("text-xs text-zinc-400")
 
     def projects_view() -> None:
         query = view["query"].lower()
@@ -442,8 +608,8 @@ def index() -> None:
         with ui.column().classes("w-full max-w-6xl mx-auto p-6 gap-6"):
             with ui.row().classes("w-full items-center justify-between"):
                 with ui.column().classes("gap-0"):
-                    ui.label("Projects").classes("text-3xl font-bold")
-                    ui.label(f"{len(projects)} in your workspace").classes("text-slate-500")
+                    ui.label("Projects").classes("text-2xl font-semibold tracking-tight")
+                    ui.label(f"{len(projects)} in your workspace").classes("text-zinc-500")
                 with ui.row().classes("items-center gap-3"):
                     search = (
                         ui.input(placeholder="Search projects", value=view["query"])
@@ -463,7 +629,7 @@ def index() -> None:
                     for project in shown:
                         project_card(project)
             else:
-                with ui.column().classes("w-full items-center py-20 gap-2 text-slate-400"):
+                with ui.column().classes("w-full items-center py-20 gap-2 text-zinc-400"):
                     ui.icon("folder_open", size="4rem")
                     ui.label("No projects found" if projects else "No projects yet").classes(
                         "text-lg"
@@ -495,18 +661,18 @@ def index() -> None:
 
         with ui.column().classes("w-full max-w-3xl mx-auto p-6 gap-6"):
             with ui.row().classes("w-full items-center justify-between"):
-                ui.label("System status").classes("text-3xl font-bold")
+                ui.label("System status").classes("text-2xl font-semibold tracking-tight")
                 ui.button("Check all", icon="refresh", on_click=check_all).props("flat")
             for title, path in (("API", "/health"), ("Database", "/health/db")):
                 with (
-                    ui.card().classes("w-full p-5 rounded-2xl"),
+                    ui.card().classes("w-full p-5"),
                     ui.row().classes("w-full items-center justify-between no-wrap"),
                 ):
                     with ui.row().classes("items-center gap-3 no-wrap"):
                         icon = ui.icon("help", color="grey", size="2rem")
                         with ui.column().classes("gap-0"):
                             ui.label(title).classes("font-semibold")
-                            result = ui.label("Checking...").classes("text-sm text-slate-500")
+                            result = ui.label("Checking...").classes("text-sm text-zinc-500")
                     ui.button(
                         "Check",
                         icon="refresh",
@@ -518,23 +684,28 @@ def index() -> None:
     # ------------------------------------------------------------ activity
     @ui.refreshable
     def activity_table() -> None:
-        table = ui.table(
-            columns=[
-                {"name": "time", "label": "Time", "field": "time", "align": "left"},
-                {"name": "method", "label": "Method", "field": "method", "align": "left"},
-                {"name": "path", "label": "Path", "field": "path", "align": "left"},
-                {"name": "status", "label": "Status", "field": "status", "align": "left"},
-                {"name": "ms", "label": "Time (ms)", "field": "ms", "align": "right"},
-            ],
-            rows=calls,
-            row_key="id",
-            pagination=20,
-        ).classes("w-full")
+        table = (
+            ui.table(
+                columns=[
+                    {"name": "time", "label": "Time", "field": "time", "align": "left"},
+                    {"name": "method", "label": "Method", "field": "method", "align": "left"},
+                    {"name": "path", "label": "Path", "field": "path", "align": "left"},
+                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                    {"name": "ms", "label": "Time (ms)", "field": "ms", "align": "right"},
+                ],
+                rows=calls,
+                row_key="id",
+                pagination=20,
+            )
+            .props("flat")
+            .classes("w-full")
+        )
         table.add_slot(
             "body-cell-status",
             """
             <q-td :props="props">
                 <q-badge
+                    :outline="true"
                     :color="props.row.status === 0 || props.row.status >= 500 ? 'negative'
                         : props.row.status >= 400 ? 'warning' : 'positive'"
                     :label="props.row.label"
@@ -555,12 +726,12 @@ def index() -> None:
         with ui.column().classes("w-full max-w-5xl mx-auto p-6 gap-6"):
             with ui.row().classes("w-full items-center justify-between"):
                 with ui.column().classes("gap-0"):
-                    ui.label("API activity").classes("text-3xl font-bold")
+                    ui.label("API activity").classes("text-2xl font-semibold tracking-tight")
                     ui.label("Requests this page sent to the API, newest first").classes(
-                        "text-slate-500"
+                        "text-zinc-500"
                     )
                 ui.button("Clear", icon="delete_sweep", on_click=clear).props("flat")
-            with ui.card().classes("w-full p-0 rounded-2xl"):
+            with ui.card().classes("w-full p-0"):
                 activity_table()
 
     @ui.refreshable
@@ -574,37 +745,51 @@ def index() -> None:
         else:
             projects_view()
 
+    def mark_nav() -> None:
+        for page, button in nav_buttons.items():
+            button.classes(
+                add="bg-zinc-200/70" if page == view["page"] else "",
+                remove="" if page == view["page"] else "bg-zinc-200/70",
+            )
+
     def navigate(page: str) -> None:
         view["page"] = page
+        mark_nav()
         content.refresh()
 
     # --------------------------------------------------------------- shell
-    with ui.header().classes(
-        "items-center justify-between bg-white text-slate-800 shadow-sm"
-    ) as header:
+    with ui.header().classes("items-center justify-between bg-white text-zinc-900 px-4") as header:
         with ui.row().classes("items-center gap-2"):
             ui.button(icon="menu", on_click=lambda: drawer.toggle()).props("flat round dense")
-            ui.icon("rocket_launch", color="primary", size="1.8rem")
-            ui.label("Projects").classes("text-lg font-bold")
+            brand()
         with ui.row().classes("items-center gap-4"):
-            health_chip = ui.chip("API", icon="circle", color="grey").props("outline dense")
+            with ui.row().classes(
+                "items-center gap-2 no-wrap px-3 py-1 rounded-full border border-zinc-200"
+            ):
+                health_dot = ui.element("span").classes("w-2 h-2 rounded-full bg-zinc-300")
+                health_text = ui.label("API").classes("text-xs text-zinc-600")
             with ui.button().props("flat round dense"):
-                with ui.avatar(color="primary", text_color="white", size="md"):
+                with ui.avatar(color="primary", text_color="white", size="sm"):
                     avatar_label = ui.label("")
                 with ui.menu():
-                    user_label = ui.label("").classes("px-4 py-2 text-sm text-slate-500")
+                    user_label = ui.label("").classes("px-4 py-2 text-sm text-zinc-500")
                     ui.separator()
                     ui.menu_item("Sign out", on_click=logout)
 
-    with ui.left_drawer(value=True).classes("bg-white pt-6").props("width=220 bordered") as drawer:
+    nav_buttons: dict[str, ui.button] = {}
+    with (
+        ui.left_drawer(value=True).classes("pt-6 px-3 gap-1").props("width=220 bordered") as drawer
+    ):
         for page, title, icon in (
             ("projects", "Projects", "folder"),
             ("system", "System status", "monitor_heart"),
             ("activity", "API activity", "swap_vert"),
         ):
-            ui.button(title, icon=icon, on_click=lambda p=page: navigate(p)).props(
-                "flat align=left no-caps"
-            ).classes("w-full")
+            nav_buttons[page] = (
+                ui.button(title, icon=icon, on_click=lambda p=page: navigate(p))
+                .props("flat align=left no-caps color=grey-9")
+                .classes("w-full")
+            )
 
     content()
     dialog_host = ui.element("div")
@@ -612,11 +797,11 @@ def index() -> None:
     async def health_monitor() -> None:
         try:
             await request("GET", "/health", log=False)
-            health_chip.props("color=positive")
-            health_chip.set_text("API online")
+            health_dot.classes(replace="w-2 h-2 rounded-full bg-green-600")
+            health_text.set_text("API online")
         except httpx.HTTPError:
-            health_chip.props("color=negative")
-            health_chip.set_text("API offline")
+            health_dot.classes(replace="w-2 h-2 rounded-full bg-red-600")
+            health_text.set_text("API offline")
 
     ui.timer(30.0, health_monitor)
     ui.timer(0.1, health_monitor, once=True)
@@ -631,4 +816,4 @@ def index() -> None:
 
 
 if __name__ in {"__main__", "__mp_main__"}:
-    ui.run(storage_secret=STORAGE_SECRET, port=8080, title="Projects", favicon="🚀")
+    ui.run(storage_secret=STORAGE_SECRET, port=8080, title="Projects", favicon="▪️")
