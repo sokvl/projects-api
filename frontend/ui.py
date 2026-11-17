@@ -15,18 +15,13 @@ STORAGE_SECRET = os.environ.get("UI_STORAGE_SECRET", "local-dev-only")
 
 UPLOAD_PATH = "/project/{project_id}/documents"
 UPLOAD_FIELD = "files"
+REPLACE_FIELD = "file"
+UPLOAD_ACCEPT = ".pdf,.docx"
 # The API checks the real project total; this only stops a single oversized pick early.
 UPLOAD_MAX_TOTAL_SIZE = 50 * 1024 * 1024
 
-# Same list as INLINE_TYPES in app/services/document.py: the API serves these inline.
-PREVIEW_TYPES = {
-    "application/pdf",
-    "image/png",
-    "image/jpeg",
-    "image/gif",
-    "image/webp",
-    "text/plain",
-}
+# The API serves only PDFs inline, so only PDFs get a preview; DOCX downloads.
+PDF = "application/pdf"
 
 FONTS = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
@@ -117,13 +112,7 @@ def day(value: str) -> str:
 
 
 def file_icon(content_type: str) -> str:
-    if content_type == "application/pdf":
-        return "picture_as_pdf"
-    if content_type.startswith("image/"):
-        return "image"
-    if content_type.startswith("text/"):
-        return "description"
-    return "insert_drive_file"
+    return "picture_as_pdf" if content_type == PDF else "article"
 
 
 def size_text(size: int) -> str:
@@ -384,24 +373,80 @@ def index() -> None:
                     "POST", UPLOAD_PATH.format(project_id=project_id), auth=True, files=files
                 )
             except httpx.HTTPError as exc:
-                if error_status(exc) in (404, 405) and error_text(exc) in (
-                    "Not Found",
-                    "Method Not Allowed",
-                ):
-                    ui.notify(
-                        "The upload endpoint is not available in the API yet",
-                        type="warning",
-                        caption=status_label(error_status(exc)),
-                    )
-                else:
-                    notify_error(exc)
+                notify_error(exc)
                 uploader.reset()
                 return
             uploader.reset()
             notify_ok(f"Uploaded {len(docs)} file(s)", status)
-            await load_projects()
+            await refresh_documents()
+
+        async def refresh_documents() -> None:
+            try:
+                _, rows = await request("GET", f"/project/{project_id}/documents", auth=True)
+            except httpx.HTTPError as exc:
+                notify_error(exc)
+                return
+            documents[:] = rows
             document_list.refresh()
-            content.refresh()
+            await reload_view()
+
+        def replace_dialog(doc: dict[str, Any]) -> None:
+            async def replace(e: events.UploadEventArguments) -> None:
+                file = (e.file.name, await e.file.read(), e.file.content_type)
+                try:
+                    status, updated = await request(
+                        "PUT", f"/document/{doc['id']}", auth=True, files=[(REPLACE_FIELD, file)]
+                    )
+                except httpx.HTTPError as exc:
+                    notify_error(exc)
+                    picker.reset()
+                    return
+                box.close()
+                notify_ok(f"Replaced with {updated['filename']}", status)
+                await refresh_documents()
+
+            with dialog_host, ui.dialog() as box, ui.card().classes("w-96 p-6 gap-3"):
+                ui.label("Replace document").classes("text-xl font-semibold")
+                ui.label(
+                    f"Pick a PDF or DOCX to replace {doc['filename']}. The old file is deleted."
+                ).classes("text-zinc-600 text-sm")
+                picker = (
+                    ui.upload(
+                        on_upload=replace,
+                        auto_upload=True,
+                        max_total_size=UPLOAD_MAX_TOTAL_SIZE,
+                        on_rejected=rejected,
+                        label="PDF or DOCX",
+                    )
+                    .props(f'accept="{UPLOAD_ACCEPT}" flat bordered')
+                    .classes("w-full")
+                )
+                with ui.row().classes("w-full justify-end"):
+                    ui.button("Cancel", on_click=box.close).props("flat")
+            box.on("hide", box.delete)
+            box.open()
+
+        def delete_document_dialog(doc: dict[str, Any]) -> None:
+            async def delete() -> None:
+                try:
+                    status, _ = await request("DELETE", f"/document/{doc['id']}", auth=True)
+                except httpx.HTTPError as exc:
+                    notify_error(exc)
+                    return
+                box.close()
+                notify_ok(f"Deleted {doc['filename']}", status)
+                await refresh_documents()
+
+            with dialog_host, ui.dialog() as box, ui.card().classes("w-96 p-6 gap-3"):
+                ui.label("Delete document?").classes("text-xl font-semibold")
+                ui.label(f"{doc['filename']} will be removed. This cannot be undone.").classes(
+                    "text-zinc-600 text-sm"
+                )
+                with ui.row().classes("w-full justify-end"):
+                    ui.button("Cancel", on_click=box.close).props("flat")
+                    ui.button("Delete", on_click=delete).props("unelevated color=negative")
+            box.on("hide", box.delete)
+            box.open()
 
         def edit_dialog() -> None:
             async def save() -> None:
@@ -462,7 +507,7 @@ def index() -> None:
             except httpx.HTTPError as exc:
                 notify_error(exc)
                 return
-            if doc["content_type"] not in PREVIEW_TYPES:
+            if doc["content_type"] != PDF:
                 ui.navigate.to(url)
                 notify_ok(f"Downloading {doc['filename']}", status)
                 return
@@ -487,16 +532,8 @@ def index() -> None:
                         ui.button(icon="close", on_click=preview.close).props(
                             "flat round dense color=grey-7"
                         )
-                if doc["content_type"].startswith("image/"):
-                    with ui.element("div").classes(
-                        "w-full grow min-h-0 flex items-center justify-center bg-zinc-50 p-4"
-                    ):
-                        image = ui.element("img").classes("max-w-full max-h-full object-contain")
-                        image.props["src"] = url
-                        image.props["alt"] = doc["filename"]
-                else:
-                    frame = ui.element("iframe").classes("w-full grow border-0 bg-white")
-                    frame.props["src"] = url
+                frame = ui.element("iframe").classes("w-full grow border-0 bg-white")
+                frame.props["src"] = url
             preview.on("hide", preview.delete)
             preview.open()
 
@@ -506,28 +543,43 @@ def index() -> None:
                 type="warning",
             )
 
+        documents: list[dict[str, Any]] = list(
+            next((p["documents"] for p in projects if p["id"] == project_id), [])
+        )
+
         @ui.refreshable
         def document_list() -> None:
-            documents = next((p["documents"] for p in projects if p["id"] == project_id), [])
             if not documents:
                 ui.label("No documents yet").classes("text-zinc-400 text-sm")
             for doc in documents:
-                viewable = doc["content_type"] in PREVIEW_TYPES
-                with (
-                    ui.row()
-                    .classes(
-                        "w-full items-center gap-3 no-wrap px-3 py-2 rounded-lg cursor-pointer "
-                        "hover:bg-zinc-100 transition-colors"
-                    )
-                    .on("click", lambda d=doc: open_document(d))
+                is_pdf = doc["content_type"] == PDF
+                with ui.row().classes(
+                    "w-full items-center gap-1 no-wrap pl-3 pr-1 py-1 rounded-lg "
+                    "hover:bg-zinc-100 transition-colors"
                 ):
-                    ui.icon(file_icon(doc["content_type"]), color="grey-8")
-                    with ui.column().classes("gap-0 grow min-w-0"):
-                        ui.label(doc["filename"]).classes("text-sm font-medium truncate")
-                        ui.label(
-                            f"{size_text(doc['size_bytes'])} · {day(doc['created_at'])}"
-                        ).classes("text-xs text-zinc-400")
-                    ui.icon("visibility" if viewable else "download", color="grey-6", size="1.2rem")
+                    with (
+                        ui.row()
+                        .classes("items-center gap-3 no-wrap grow min-w-0 cursor-pointer py-1")
+                        .on("click", lambda d=doc: open_document(d))
+                    ):
+                        ui.icon(file_icon(doc["content_type"]), color="grey-8")
+                        with ui.column().classes("gap-0 min-w-0"):
+                            ui.label(doc["filename"]).classes("text-sm font-medium truncate")
+                            ui.label(
+                                f"{size_text(doc['size_bytes'])} · {day(doc['created_at'])}"
+                            ).classes("text-xs text-zinc-400")
+                    ui.button(
+                        icon="visibility" if is_pdf else "download",
+                        on_click=lambda d=doc: open_document(d),
+                    ).props("flat round dense size=sm color=grey-7").tooltip(
+                        "Preview" if is_pdf else "Download"
+                    )
+                    ui.button(icon="swap_horiz", on_click=lambda d=doc: replace_dialog(d)).props(
+                        "flat round dense size=sm color=grey-7"
+                    ).tooltip("Replace")
+                    ui.button(
+                        icon="delete_outline", on_click=lambda d=doc: delete_document_dialog(d)
+                    ).props("flat round dense size=sm color=grey-7").tooltip("Delete")
 
         with (
             dialog_host,
@@ -559,9 +611,9 @@ def index() -> None:
                     max_total_size=UPLOAD_MAX_TOTAL_SIZE,
                     on_multi_upload=upload,
                     on_rejected=rejected,
-                    label="Any file type · 50 MB per project",
+                    label="PDF or DOCX · 50 MB per project",
                 )
-                .props("flat bordered")
+                .props(f'accept="{UPLOAD_ACCEPT}" flat bordered')
                 .classes("w-full")
             )
             ui.separator()
