@@ -94,8 +94,9 @@ class DocumentService:
         document = await self.documents.get_for_member(document_id, user.id)
         if document is None:
             raise NotFoundError("Document not found")
+        is_pdf = document.content_type == PDF
         return self.s3_storage.generate_presigned_download_url(
-            document.s3_key, document.filename, inline=document.content_type == PDF
+            document.s3_key, document.filename, inline=is_pdf
         )
 
     async def _prepare(self, project_id: uuid.UUID, file: UploadFile) -> Document:
