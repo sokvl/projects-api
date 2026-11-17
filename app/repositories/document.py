@@ -30,7 +30,6 @@ class DocumentRepository:
         query = (
             select(Document)
             .where(Document.project_id == project_id)
-            # now() is the transaction start, so files from one upload share created_at
             .order_by(Document.created_at.desc(), Document.id)
         )
         return (await self.session.scalars(query)).all()
