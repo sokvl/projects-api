@@ -12,8 +12,8 @@ JWT_ALGORITHM = "HS256"
 
 password_hasher = PasswordHash.recommended()
 
-# Might be tuned later or replaced by rate limiting.
-hash_limiter = CapacityLimiter(20)
+# Sized for t3.micro (2 vCPU, 1 GiB): each argon2 hash holds 64 MiB, so 4 at once use 256 MiB
+hash_limiter = CapacityLimiter(4)
 
 
 async def hash_password(password: str) -> str:

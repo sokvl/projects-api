@@ -7,7 +7,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from app.core.config import Settings, settings
 
-ses_limiter = CapacityLimiter(10)
+ses_limiter = CapacityLimiter(5)
 
 
 class MailError(Exception):
