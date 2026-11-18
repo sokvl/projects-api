@@ -2,10 +2,11 @@ import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.project import Project, ProjectMember
+from app.models.project import Project, ProjectMember, ProjectRole
 
 
 class ProjectRepository:
@@ -17,10 +18,16 @@ class ProjectRepository:
         await self.session.flush()
         return project
 
-    async def add_member(self, member: ProjectMember) -> ProjectMember:
-        self.session.add(member)
-        await self.session.flush()
-        return member
+    async def add_member(
+        self, project_id: uuid.UUID, user_id: uuid.UUID, role: ProjectRole
+    ) -> ProjectMember | None:
+        query = (
+            insert(ProjectMember)
+            .values(user_id=user_id, project_id=project_id, role=role)
+            .on_conflict_do_nothing(index_elements=["user_id", "project_id"])
+            .returning(ProjectMember)
+        )
+        return await self.session.scalar(query)
 
     async def list_users_projects(self, user_id: uuid.UUID) -> Sequence[Project]:
         query = (
@@ -42,7 +49,6 @@ class ProjectRepository:
             .where(Project.id == project_id, ProjectMember.user_id == user_id)
         )
         if lock:
-            # FOR NO KEY UPDATE OF projects: queues uploads, but not inserts that reference the row
             query = query.with_for_update(of=Project, key_share=True)
         return await self.session.scalar(query)
 

@@ -24,3 +24,7 @@ class FileTooLargeError(DomainError):
 
 class InvalidFileTypeError(DomainError):
     pass
+
+
+class ServiceUnavailableError(DomainError):
+    pass

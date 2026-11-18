@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from alembic import command
 from app.core.config import settings
 from app.db.session import get_session
+from app.mail.ses import Mailer, get_mailer
 from app.main import app
 from app.models import Base
 from app.storage.s3 import S3Storage, get_storage
@@ -74,9 +75,15 @@ def sql_statements() -> Iterator[list[str]]:
 
 
 @pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
+def mailer() -> MagicMock:
+    return MagicMock(spec=Mailer)
+
+
+@pytest.fixture
+async def client(mailer: MagicMock) -> AsyncIterator[AsyncClient]:
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_storage] = lambda: MagicMock(spec=S3Storage)
+    app.dependency_overrides[get_mailer] = lambda: mailer
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
     app.dependency_overrides.clear()

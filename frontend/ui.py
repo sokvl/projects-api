@@ -8,10 +8,14 @@ from http import HTTPStatus
 from typing import Any
 
 import httpx
+from fastapi.responses import RedirectResponse
 from nicegui import app, events, ui
 
 API_BASE = os.environ.get("API_URL", "http://localhost:8000")
 STORAGE_SECRET = os.environ.get("UI_STORAGE_SECRET", "local-dev-only")
+
+# The invitation mail links to /join?token=...; the token waits here until the user is logged in.
+JOIN_TOKEN_KEY = "join_token"
 
 UPLOAD_PATH = "/project/{project_id}/documents"
 UPLOAD_FIELD = "files"
@@ -221,6 +225,9 @@ def index() -> None:
         view["page"] = "projects"
         await load_projects()
         apply_state()
+        # apply_state() removed the login form this handler belongs to; run in a lasting element
+        with dialog_host:
+            await join_pending()
 
     def logout() -> None:
         app.storage.user.clear()
@@ -262,6 +269,16 @@ def index() -> None:
                     ui.label("Sign in or create an account to continue.").classes(
                         "text-zinc-500 text-sm"
                     )
+                if app.storage.user.get(JOIN_TOKEN_KEY):
+                    with ui.row().classes(
+                        "w-full items-center gap-3 no-wrap p-3 rounded-lg "
+                        "border border-zinc-200 bg-zinc-50"
+                    ):
+                        ui.icon("mail", color="grey-8")
+                        ui.label(
+                            "You've been invited to a project. Sign in or create an account "
+                            "and you'll join it right away."
+                        ).classes("text-sm text-zinc-700")
                 with (
                     ui.tabs()
                     .props("align=left dense no-caps")
@@ -359,6 +376,24 @@ def index() -> None:
                 return
             invite_input.set_value("")
             notify_ok(f"{login} added to the project", status)
+
+        async def share() -> None:
+            email = email_input.value
+            if not email:
+                ui.notify("Enter an email to invite", type="warning")
+                return
+            try:
+                status, invitation = await request(
+                    "POST", f"/project/{project_id}/share", auth=True, params={"with": email}
+                )
+            except httpx.HTTPError as exc:
+                notify_error(exc)
+                return
+            email_input.set_value("")
+            expires = invitation["expires_at"][:16].replace("T", " ")
+            notify_ok(
+                f"Invitation sent to {invitation['email']}, valid until {expires} UTC", status
+            )
 
         async def upload(e: events.MultiUploadEventArguments) -> None:
             files = [
@@ -618,10 +653,18 @@ def index() -> None:
             )
             ui.separator()
             ui.label("Invite a teammate").classes("font-semibold")
+            ui.label("By login, they're added right away.").classes("text-xs text-zinc-500 -mt-2")
             with ui.row().classes("w-full items-center no-wrap"):
                 invite_input = ui.input("Login").props("outlined dense").classes("grow")
                 invite_input.on("keydown.enter", invite)
                 ui.button("Invite", icon="person_add", on_click=invite).props("unelevated")
+            ui.label("By email, they get a join link (owner only).").classes(
+                "text-xs text-zinc-500"
+            )
+            with ui.row().classes("w-full items-center no-wrap"):
+                email_input = ui.input("Email").props("outlined dense type=email").classes("grow")
+                email_input.on("keydown.enter", share)
+                ui.button("Send link", icon="forward_to_inbox", on_click=share).props("unelevated")
             ui.separator()
             with ui.row().classes("w-full items-center justify-between no-wrap"):
                 with ui.column().classes("gap-0"):
@@ -858,13 +901,39 @@ def index() -> None:
     ui.timer(30.0, health_monitor)
     ui.timer(0.1, health_monitor, once=True)
 
+    async def join_pending() -> None:
+        token = app.storage.user.pop(JOIN_TOKEN_KEY, None)
+        if not token or not logged_in():
+            return
+        try:
+            status, project = await request("POST", "/join", json_body={"token": token}, auth=True)
+        except httpx.HTTPError as exc:
+            if error_status(exc) == 404:
+                ui.notify(
+                    "Invitation invalid or expired", type="negative", caption=status_label(404)
+                )
+            else:
+                notify_error(exc)
+            return
+        notify_ok(f"Joined {project['name']}", status)
+        await reload_view()
+        await project_dialog(project["id"])
+
     async def restore_session() -> None:
         if logged_in():
             await load_projects()
             content.refresh()
+            await join_pending()
 
     apply_state()
     ui.timer(0.1, restore_session, once=True)
+
+
+@ui.page("/join")
+def join(token: str = "") -> RedirectResponse:
+    if token:
+        app.storage.user[JOIN_TOKEN_KEY] = token
+    return RedirectResponse("/")
 
 
 if __name__ in {"__main__", "__mp_main__"}:

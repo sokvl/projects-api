@@ -2,15 +2,14 @@ import logging
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ConflictError, ForbiddenError, NotFoundError
-from app.db.errors import is_unique_violation
+from app.core.errors import ConflictError, NotFoundError
 from app.models.project import Project, ProjectMember, ProjectRole
 from app.models.user import User
 from app.repositories.project import ProjectRepository
 from app.repositories.user import UserRepository
+from app.services.access import require_project_ownership
 from app.storage.s3 import S3Storage, StorageError, project_prefix
 
 logger = logging.getLogger(__name__)
@@ -33,8 +32,7 @@ class ProjectService:
         project = Project(name=name, description=description)
         await self.projects.add(project)
 
-        member = ProjectMember(user_id=owner.id, project_id=project.id, role=ProjectRole.OWNER)
-        await self.projects.add_member(member)
+        await self.projects.add_member(project.id, owner.id, ProjectRole.OWNER)
 
         await self.session.commit()
         return project
@@ -55,7 +53,7 @@ class ProjectService:
         return project
 
     async def delete(self, project_id: uuid.UUID, user: User) -> None:
-        await self._require_owner(project_id, user)
+        await require_project_ownership(self.projects, project_id, user)
         await self.projects.delete(project_id)
         await self.session.commit()
         try:
@@ -64,19 +62,13 @@ class ProjectService:
             logger.exception("Could not delete objects of project %s", project_id)
 
     async def invite(self, project_id: uuid.UUID, owner: User, login: str) -> ProjectMember:
-        await self._require_owner(project_id, owner)
+        await require_project_ownership(self.projects, project_id, owner)
         invitee = await self.users.get_by_login(login)
         if invitee is None:
             raise NotFoundError("User not found")
-        member = ProjectMember(
-            user_id=invitee.id, project_id=project_id, role=ProjectRole.PARTICIPANT
-        )
-        try:
-            await self.projects.add_member(member)
-        except IntegrityError as err:
-            if not is_unique_violation(err):
-                raise
-            raise ConflictError("User already has access to the project") from err
+        member = await self.projects.add_member(project_id, invitee.id, ProjectRole.PARTICIPANT)
+        if member is None:
+            raise ConflictError("User already has access to the project")
         await self.session.commit()
         return member
 
@@ -85,10 +77,3 @@ class ProjectService:
         if project is None:
             raise NotFoundError("Project or member not found")
         return project
-
-    async def _require_owner(self, project_id: uuid.UUID, user: User) -> None:
-        member = await self.projects.get_member(project_id, user.id)
-        if member is None:
-            raise NotFoundError("Project or member not found")
-        if member.role != ProjectRole.OWNER:
-            raise ForbiddenError("Only the project owner can do this")
