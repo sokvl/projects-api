@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.errors import NotFoundError, ServiceUnavailableError
 from app.mail.ses import Mailer, MailError
 from app.models.invitation import Invitation
-from app.models.project import Project
+from app.models.project import Project, ProjectRole
 from app.models.user import User
 from app.repositories.invitation import InvitationRepository
 from app.repositories.project import ProjectRepository
@@ -42,6 +42,7 @@ class InvitationService:
         if project is None:
             raise NotFoundError("Project or member not found")
 
+        # dive-by clean
         await self.invitations.delete_expired()
         token = secrets.token_urlsafe(32)
         invitation = Invitation(
@@ -68,7 +69,8 @@ class InvitationService:
         project_id = await self.invitations.burn(hash_token(token))
         if project_id is None:
             raise NotFoundError("Invitation not found or expired")
-        await self.projects.add_participant(project_id, user.id)
+        # an existing member keeps their role, and joining again is not an error
+        await self.projects.add_member(project_id, user.id, ProjectRole.PARTICIPANT)
         project = await self.projects.get_for_member(project_id, user.id)
         if project is None:
             raise NotFoundError("Invitation not found or expired")

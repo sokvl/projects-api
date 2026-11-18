@@ -2,11 +2,9 @@ import logging
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError
-from app.db.errors import is_unique_violation
 from app.models.project import Project, ProjectMember, ProjectRole
 from app.models.user import User
 from app.repositories.project import ProjectRepository
@@ -34,8 +32,7 @@ class ProjectService:
         project = Project(name=name, description=description)
         await self.projects.add(project)
 
-        member = ProjectMember(user_id=owner.id, project_id=project.id, role=ProjectRole.OWNER)
-        await self.projects.add_member(member)
+        await self.projects.add_member(project.id, owner.id, ProjectRole.OWNER)
 
         await self.session.commit()
         return project
@@ -69,15 +66,9 @@ class ProjectService:
         invitee = await self.users.get_by_login(login)
         if invitee is None:
             raise NotFoundError("User not found")
-        member = ProjectMember(
-            user_id=invitee.id, project_id=project_id, role=ProjectRole.PARTICIPANT
-        )
-        try:
-            await self.projects.add_member(member)
-        except IntegrityError as err:
-            if not is_unique_violation(err):
-                raise
-            raise ConflictError("User already has access to the project") from err
+        member = await self.projects.add_member(project_id, invitee.id, ProjectRole.PARTICIPANT)
+        if member is None:
+            raise ConflictError("User already has access to the project")
         await self.session.commit()
         return member
 

@@ -2,14 +2,12 @@ import uuid
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.models.project import Project, ProjectMember, ProjectRole
 from app.models.user import User
 from app.services.project import ProjectService
 from app.storage.s3 import StorageError
-from tests.unit.fakes import FakeDriverError
 
 PROJECT_ID = uuid.uuid4()
 
@@ -49,10 +47,7 @@ async def test_create_adds_project_with_owner_membership(
     )
 
     projects.add.assert_awaited_once_with(project)
-    member = projects.add_member.await_args.args[0]
-    assert member.user_id == owner.id
-    assert member.project_id == PROJECT_ID
-    assert member.role == ProjectRole.OWNER
+    projects.add_member.assert_awaited_once_with(PROJECT_ID, owner.id, ProjectRole.OWNER)
     session.commit.assert_awaited_once()
 
 
@@ -161,12 +156,8 @@ async def test_invite_adds_participant_and_commits(
         PROJECT_ID, owner, "kasia"
     )
 
-    projects.add_member.assert_awaited_once_with(member)
-    assert (member.user_id, member.project_id, member.role) == (
-        invitee.id,
-        PROJECT_ID,
-        ProjectRole.PARTICIPANT,
-    )
+    projects.add_member.assert_awaited_once_with(PROJECT_ID, invitee.id, ProjectRole.PARTICIPANT)
+    assert member is projects.add_member.return_value
     session.commit.assert_awaited_once()
 
 
@@ -204,9 +195,7 @@ async def test_invite_existing_member_raises_conflict(
 ) -> None:
     projects.get_member.return_value = membership(ProjectRole.OWNER)
     users.get_by_login.return_value = User(id=uuid.uuid4(), login="kasia", password_hash="x")
-    projects.add_member.side_effect = IntegrityError(
-        "INSERT INTO project_members", {}, FakeDriverError("23505")
-    )
+    projects.add_member.return_value = None
 
     with pytest.raises(ConflictError):
         await ProjectService(projects, users, AsyncMock(), session).invite(

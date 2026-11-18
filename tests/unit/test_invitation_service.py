@@ -185,7 +185,7 @@ async def test_join_burns_the_token_hash_and_adds_the_user(
     project = await service.join("the-token", owner)
 
     invitations.burn.assert_awaited_once_with(hash_token("the-token"))
-    projects.add_participant.assert_awaited_once_with(PROJECT_ID, owner.id)
+    projects.add_member.assert_awaited_once_with(PROJECT_ID, owner.id, ProjectRole.PARTICIPANT)
     session.commit.assert_awaited_once()
     assert project is projects.get_for_member.return_value
 

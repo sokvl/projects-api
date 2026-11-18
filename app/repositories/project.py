@@ -18,18 +18,16 @@ class ProjectRepository:
         await self.session.flush()
         return project
 
-    async def add_member(self, member: ProjectMember) -> ProjectMember:
-        self.session.add(member)
-        await self.session.flush()
-        return member
-
-    async def add_participant(self, project_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    async def add_member(
+        self, project_id: uuid.UUID, user_id: uuid.UUID, role: ProjectRole
+    ) -> ProjectMember | None:
         query = (
             insert(ProjectMember)
-            .values(user_id=user_id, project_id=project_id, role=ProjectRole.PARTICIPANT)
-            .on_conflict_do_nothing()
+            .values(user_id=user_id, project_id=project_id, role=role)
+            .on_conflict_do_nothing(index_elements=["user_id", "project_id"])
+            .returning(ProjectMember)
         )
-        await self.session.execute(query)
+        return await self.session.scalar(query)
 
     async def list_users_projects(self, user_id: uuid.UUID) -> Sequence[Project]:
         query = (
