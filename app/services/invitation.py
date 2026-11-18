@@ -42,7 +42,7 @@ class InvitationService:
         if project is None:
             raise NotFoundError("Project or member not found")
 
-        # dive-by clean
+        # drive-by cleaning
         await self.invitations.delete_expired()
         token = secrets.token_urlsafe(32)
         invitation = Invitation(
