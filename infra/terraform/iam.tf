@@ -8,6 +8,11 @@ data "aws_iam_policy_document" "api" {
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.documents.arn]
   }
+
+  statement {
+    actions   = ["ses:SendEmail"]
+    resources = [aws_ses_email_identity.sender.arn]
+  }
 }
 
 resource "aws_iam_policy" "api" {
