@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 
-from app.api import auth, documents, projects
+from app.api import auth, documents, invitations, projects
 from app.core.handlers import register_exception_handlers
 from app.db.session import DBSessionDep, engine
 
@@ -20,6 +20,7 @@ register_exception_handlers(app)
 app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(documents.router)
+app.include_router(invitations.router)
 
 
 @app.get("/health")

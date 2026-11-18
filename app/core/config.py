@@ -22,5 +22,10 @@ class Settings(BaseSettings):
 
     project_size_limit_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
 
+    ses_api_url: str | None = None
+    sender_email: str = "noreply@projects.local"
+    frontend_url: str = "http://localhost:8080"
+    invitation_ttl_hours: int = Field(default=168, gt=0)
+
 
 settings = Settings()

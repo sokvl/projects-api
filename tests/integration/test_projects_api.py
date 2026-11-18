@@ -18,8 +18,9 @@ PROJECT_ENDPOINTS = [
     ("PUT", "/project/{}/info"),
     ("DELETE", "/project/{}"),
     ("POST", "/project/{}/invite?user=someone"),
+    ("POST", "/project/{}/share?with=anna@example.com"),
 ]
-PROJECT_ENDPOINT_IDS = ["get_info", "put_info", "delete", "invite"]
+PROJECT_ENDPOINT_IDS = ["get_info", "put_info", "delete", "invite", "share"]
 
 
 async def create_project(client: AsyncClient, name: str, headers: dict[str, str]) -> str:

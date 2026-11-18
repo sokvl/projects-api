@@ -9,6 +9,7 @@ from app.core.errors import (
     ForbiddenError,
     InvalidFileTypeError,
     NotFoundError,
+    ServiceUnavailableError,
     UnauthorizedError,
 )
 
@@ -19,6 +20,7 @@ STATUS_CODES: dict[type[DomainError], int] = {
     ConflictError: status.HTTP_409_CONFLICT,
     FileTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
     InvalidFileTypeError: status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+    ServiceUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
 

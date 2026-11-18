@@ -5,12 +5,13 @@ from collections.abc import Sequence
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ConflictError, ForbiddenError, NotFoundError
+from app.core.errors import ConflictError, NotFoundError
 from app.db.errors import is_unique_violation
 from app.models.project import Project, ProjectMember, ProjectRole
 from app.models.user import User
 from app.repositories.project import ProjectRepository
 from app.repositories.user import UserRepository
+from app.services.access import require_project_ownership
 from app.storage.s3 import S3Storage, StorageError, project_prefix
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ class ProjectService:
         return project
 
     async def delete(self, project_id: uuid.UUID, user: User) -> None:
-        await self._require_owner(project_id, user)
+        await require_project_ownership(self.projects, project_id, user)
         await self.projects.delete(project_id)
         await self.session.commit()
         try:
@@ -64,7 +65,7 @@ class ProjectService:
             logger.exception("Could not delete objects of project %s", project_id)
 
     async def invite(self, project_id: uuid.UUID, owner: User, login: str) -> ProjectMember:
-        await self._require_owner(project_id, owner)
+        await require_project_ownership(self.projects, project_id, owner)
         invitee = await self.users.get_by_login(login)
         if invitee is None:
             raise NotFoundError("User not found")
@@ -85,10 +86,3 @@ class ProjectService:
         if project is None:
             raise NotFoundError("Project or member not found")
         return project
-
-    async def _require_owner(self, project_id: uuid.UUID, user: User) -> None:
-        member = await self.projects.get_member(project_id, user.id)
-        if member is None:
-            raise NotFoundError("Project or member not found")
-        if member.role != ProjectRole.OWNER:
-            raise ForbiddenError("Only the project owner can do this")
