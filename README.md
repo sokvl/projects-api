@@ -49,4 +49,4 @@ poetry run pytest
 ```
 
 ## Roadmap
-- [ ] Invitations by email: one-time links sent through SQS → Lambda → SES.
+- [ ] Invitations by email: one-time join links sent through AWS SES.
